@@ -16,6 +16,16 @@ const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 let serverProcess = null;
 let mainWindow = null;
 
+// Smoke test (CI): POLPO_SMOKE_TEST=<result file> opens the app with the project folder given as
+// argument, checks the window loads the UI and the UI talks to the server, writes the result and exits.
+const SMOKE_RESULT = process.env.POLPO_SMOKE_TEST;
+
+/** An error dialog, or a log line in the smoke test (a dialog would wait forever in CI). */
+function showError(title, message) {
+  if (SMOKE_RESULT) console.error(`[Polpo] ${title}: ${message}`);
+  else dialog.showErrorBox(title, message);
+}
+
 // ── Config persistence ───────────────────────────────────────────────────
 
 function loadConfig() {
@@ -135,7 +145,7 @@ async function ensureServer(workDir) {
   const binary = findServerBinary();
   if (!binary) {
     console.error("[Polpo] Server binary not found");
-    dialog.showErrorBox(
+    showError(
       "Polpo Server Not Found",
       "Could not find the Polpo server binary. Please reinstall the application."
     );
@@ -192,7 +202,7 @@ async function ensureServer(workDir) {
     console.error("[Polpo] Server failed to start");
     const reason = exitCode !== null ? `The Polpo server exited with code ${exitCode}.` : "The Polpo server did not start in time.";
     const lastLines = output.trim().split(/\r?\n/).slice(-12).join("\n");
-    dialog.showErrorBox(
+    showError(
       "Server Start Failed",
       `${reason}\n\n${lastLines || "(no output)"}\n\nFull log: ${logPath}`
     );
@@ -240,6 +250,7 @@ function createWindow() {
   console.log("[Polpo] __dirname:", __dirname);
   console.log("[Polpo] indexPath:", indexPath);
   console.log("[Polpo] indexPath exists:", existsSync(indexPath));
+  if (SMOKE_RESULT) watchSmokeTest(mainWindow);
   mainWindow.loadFile(indexPath);
 
   // Open DevTools in development / debug
@@ -249,6 +260,44 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+  });
+}
+
+// ── Smoke test ──────────────────────────────────────────────────────────
+
+/**
+ * The window must load every local file (no file:// errors), render the app into #root and reach the
+ * server (an API request answered without error) within 45 s. The result goes to SMOKE_RESULT.
+ */
+function watchSmokeTest(win) {
+  const fileErrors = [];
+  const apiOk = [];
+  const consoleErrors = [];
+  const { session } = win.webContents;
+  session.webRequest.onErrorOccurred(({ url, error }) => {
+    if (url.startsWith("file:")) fileErrors.push(`${url}: ${error}`);
+  });
+  session.webRequest.onCompleted(({ url, statusCode }) => {
+    if (url.startsWith(`http://localhost:${SERVER_PORT}/`) && statusCode < 400) apiOk.push(url);
+  });
+  win.webContents.on("console-message", (_event, level, message) => {
+    if (level >= 3) consoleErrors.push(message);
+  });
+  win.webContents.on("did-fail-load", (_event, _code, description, url) => fileErrors.push(`${url}: ${description}`));
+
+  win.webContents.once("did-finish-load", async () => {
+    let rendered = 0;
+    for (const deadline = Date.now() + 45_000; Date.now() < deadline;) {
+      rendered = await win.webContents.executeJavaScript('document.getElementById("root")?.childElementCount ?? 0').catch(() => 0);
+      if (rendered > 0 && apiOk.length > 0) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const ok = fileErrors.length === 0 && rendered > 0 && apiOk.length > 0;
+    const result = { ok, rendered, api: apiOk.slice(0, 5), fileErrors, consoleErrors: consoleErrors.slice(0, 20) };
+    writeFileSync(SMOKE_RESULT, JSON.stringify(result, null, 2));
+    console.log("[Polpo] smoke test:", JSON.stringify(result));
+    killServer();
+    app.exit(ok ? 0 : 1);
   });
 }
 
@@ -319,14 +368,17 @@ app.whenReady().then(async () => {
 
   const serverOk = await ensureServer(workDir);
   if (!serverOk) {
-    app.quit();
+    if (SMOKE_RESULT) {
+      writeFileSync(SMOKE_RESULT, JSON.stringify({ ok: false, error: "the server did not start" }, null, 2));
+      app.exit(1);
+    } else app.quit();
     return;
   }
 
   createWindow();
 
   // Check for updates after window is up (non-blocking)
-  setupAutoUpdater();
+  if (!SMOKE_RESULT) setupAutoUpdater();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

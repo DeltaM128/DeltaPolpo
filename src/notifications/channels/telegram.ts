@@ -510,8 +510,9 @@ export class TelegramCallbackPoller {
   }
 
   /**
-   * A message in a group or supergroup. Only messages addressed to the bot get an answer;
-   * the rest reaches the gateway as context (text only, nothing is downloaded).
+   * A message in a group or supergroup. Only messages addressed to the bot get an answer; the rest
+   * reaches the gateway as context. Photos, voice notes and files are downloaded and described once
+   * (voice notes transcribed), so they are part of that context for every agent.
    */
   private async handleGroupMessage(message: TelegramMessage): Promise<void> {
     const gateway = this.gateway!;
@@ -544,23 +545,54 @@ export class TelegramCallbackPoller {
     const { addressed, forOtherBot, text } = groupAddressing(message, me);
     if (forOtherBot) return;
     const group: InboundGroup = { title, threadId, addressed };
+    const refs = inboundMediaOf(message);
+    const media = refs.length > 0 ? await this.groupMedia(chatId, message.message_id, refs) : undefined;
+    // What the agent gets with its turn: images and files; a transcribed voice note is in the text already
+    const forAgent = media && { ...media, attachments: media.attachments.filter(a => !media.transcribed.includes(a)) };
+    const target = { threadId, replyTo: message.message_id };
     if (!addressed) {
-      const line = [mediaLabel(message), text].filter(Boolean).join(" ").trim();
+      const line = [media?.text || mediaLabel(message), text].filter(Boolean).join(" ").trim();
       if (!line) return;
       // groupReplies "intent": the agent may join in, then it answers as if it had been called
-      if (text.trim() && gateway.joinsByIntent
-        && await gateway.joinsByIntent(senderId, chatId, text, senderName, String(message.message_id), { ...group, members: await this.memberCount(chatId) })) {
-        await this.respond(chatId, { threadId, replyTo: message.message_id }, text, inboundMediaOf(message), senderId, senderName, String(message.message_id), { ...group, addressed: true });
+      if ((text.trim() || media?.text) && gateway.joinsByIntent
+        && await gateway.joinsByIntent(senderId, chatId, line, senderName, String(message.message_id), { ...group, members: await this.memberCount(chatId) })) {
+        await this.respond(chatId, target, line, refs, senderId, senderName, String(message.message_id), { ...group, addressed: true }, forAgent);
         return;
       }
       await gateway.handleInboundMessage(senderId, chatId, line, senderName, String(message.message_id), [], group);
       return;
     }
-    const media = inboundMediaOf(message);
     // A bare mention ("@bot") is still a call: pass it on as written.
-    const body = text.trim() || (media.length === 0 ? (message.text ?? message.caption ?? "") : "");
-    if (!body && media.length === 0) return;
-    await this.respond(chatId, { threadId, replyTo: message.message_id }, body, media, senderId, senderName, String(message.message_id), group);
+    const body = text.trim() || (refs.length === 0 ? (message.text ?? message.caption ?? "") : "");
+    if (!body && refs.length === 0) return;
+    // the media line goes into the group's transcript with the message (commands stay as written)
+    const turn = media?.text && !body.startsWith("/") ? [media.text, body].filter(Boolean).join(" ") : body;
+    await this.respond(chatId, target, turn, refs, senderId, senderName, String(message.message_id), group, forAgent);
+  }
+
+  /**
+   * Download and describe a group message's media once: every bot of the instance in the group gets
+   * the same update, the first one does the work (with its own token, file ids are per bot).
+   */
+  private groupMedia(chatId: string, messageId: number, refs: InboundMediaRef[]): Promise<GroupMedia> {
+    const key = `${chatId}:${messageId}`;
+    let pending = sharedGroupMedia.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const downloaded = await this.downloadMedia(refs);
+        const described = downloaded.attachments.length > 0 && this.gateway?.describeGroupMedia
+          ? await this.gateway.describeGroupMedia(chatId, String(messageId), downloaded.attachments).catch((err: unknown) => {
+            console.error(`[polpo/telegram] group media: ${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
+          })
+          : undefined;
+        return { ...downloaded, text: described?.text ?? "", transcribed: described?.transcribed ?? [] };
+      })();
+      sharedGroupMedia.set(key, pending);
+      // the other bots read it within a poll or two; do not keep the bytes around
+      setTimeout(() => sharedGroupMedia.delete(key), GROUP_MEDIA_TTL_MS).unref?.();
+    }
+    return pending;
   }
 
   /** Typing while the gateway works, then the reply (text, buttons, files) in the right chat and topic. */
@@ -573,6 +605,8 @@ export class TelegramCallbackPoller {
     senderName: string | undefined,
     messageId: string,
     group?: InboundGroup,
+    /** Media already downloaded (groups); otherwise `media` is downloaded here. */
+    prepared?: { attachments: InboundAttachment[]; skipped: string[] },
   ): Promise<void> {
     const gateway = this.gateway!;
     // Send typing immediately and keep refreshing every 4s until we respond
@@ -582,8 +616,9 @@ export class TelegramCallbackPoller {
     }, 4000);
 
     try {
-      const { attachments, skipped } = await this.downloadMedia(media);
-      if (media.length > 0 && attachments.length === 0) {
+      const { attachments, skipped } = prepared ?? await this.downloadMedia(media);
+      // nothing could be downloaded (a voice note already transcribed into the text is not missing)
+      if (media.length > 0 && attachments.length === 0 && skipped.length > 0) {
         await this.sendReply(chatId, escapeHtml(skipped[0] ?? "Could not download the attachment."), undefined, undefined, true, target);
         return;
       }
@@ -793,6 +828,9 @@ export interface TelegramGatewayHandler {
 
   /** The bot joined a group, or a group became a supergroup. Returns a message for the group. */
   handleGroupEvent?(event: TelegramGroupEvent): Promise<string | undefined>;
+
+  /** A group message's photo, voice note or file in one transcript line (voice notes transcribed). */
+  describeGroupMedia?(chatId: string, messageId: string, attachments: InboundAttachment[]): Promise<{ text: string; transcribed: InboundAttachment[] }>;
 }
 
 /** Where a message goes inside a chat: a forum topic, as a reply to a message. */
@@ -935,6 +973,17 @@ export interface InboundAttachment {
   mimeType: string;
   data: Buffer;
 }
+
+/** A group message's media, downloaded and described once for all the bots of the instance. */
+interface GroupMedia {
+  attachments: InboundAttachment[];
+  skipped: string[];
+  /** One transcript line ("[photo: …]", "[voice message, transcribed: …]"), empty if not described. */
+  text: string;
+  transcribed: InboundAttachment[];
+}
+const sharedGroupMedia = new Map<string, Promise<GroupMedia>>();
+const GROUP_MEDIA_TTL_MS = 60_000;
 
 interface InboundMediaRef {
   kind: InboundAttachment["kind"];

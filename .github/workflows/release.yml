@@ -40,8 +40,9 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           node -e "const p=require('./ui/package.json'); p.version='$VERSION'; require('fs').writeFileSync('./ui/package.json', JSON.stringify(p, null, 2)+'\n')"
 
+      # Electron loads the UI from file://: relative asset paths, no service worker (POLPO_ELECTRON)
       - name: Build Vite UI
-        run: VITE_POLPO_API_URL=http://localhost:3890 pnpm exec vite build
+        run: POLPO_ELECTRON=1 VITE_POLPO_API_URL=http://localhost:3890 pnpm exec vite build
         working-directory: ui
 
       # Upload for desktop jobs
