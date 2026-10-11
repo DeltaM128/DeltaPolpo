@@ -30,6 +30,7 @@ import { INTERNAL_CALL_HEADER, isInternalCall } from "../internal-call.js";
 import { type ContextCheckpointStore } from "../context-checkpoint.js";
 import { createSessionCompaction } from "../session-compactor.js";
 import type { TokenUsageRecord } from "@polpo-ai/core/token-usage";
+import type { ConversationCheckTarget } from "@polpo-ai/core/conversation-checks";
 
 const DEFAULT_MAX_TURNS = 200;
 
@@ -456,7 +457,7 @@ export interface CompletionRouteDeps {
   /** Build agent system prompt for conversational mode. */
   buildAgentPrompt: (agentConfig: any) => string | Promise<string>;
   /** Create tools + executor for the agent. Return empty arrays for chat-only. */
-  resolveAgentTools: (agentConfig: any, context?: { sessionId: () => string | undefined }) => Promise<{
+  resolveAgentTools: (agentConfig: any, context?: { sessionId: () => string | undefined; origin?: ConversationCheckTarget }) => Promise<{
     tools: any[];
     executor: (name: string, args: Record<string, unknown>, context?: ToolExecutionContext) => Promise<string>;
     isInteractive?: (name: string) => boolean;
@@ -500,6 +501,21 @@ export interface ToolExecutionContext {
   turnId?: string;
   toolCallId?: string;
   sessionId?: string;
+  /** Where an internal channel turn came from (x-polpo-chat-origin): recurring checks report there. */
+  origin?: ConversationCheckTarget;
+}
+
+/** Header with the origin of a channel turn (URI-encoded JSON); honoured only on internal calls. */
+export const CHAT_ORIGIN_HEADER = "x-polpo-chat-origin";
+
+function chatOrigin(header: string | undefined): ConversationCheckTarget | undefined {
+  if (!header) return undefined;
+  try {
+    const value = JSON.parse(decodeURIComponent(header)) as ConversationCheckTarget;
+    return typeof value?.channel === "string" && typeof value?.chatId === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Longest the server's own callers may wait for a busy session (x-polpo-lease-wait, ms). */
@@ -550,6 +566,7 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
     // Requests this process sends to itself (scheduler, channels, background waits) may hand a
     // lease over, wait longer and skip storing the user message; nobody else can.
     const internal = isInternalCall(c.req.header(INTERNAL_CALL_HEADER));
+    const origin = internal ? chatOrigin(c.req.header(CHAT_ORIGIN_HEADER)) : undefined;
     /**
      * Claim the session's lease: synchronously when free (or handed over by the scheduler via
      * x-polpo-lease), otherwise wait only when the caller asked to (x-polpo-lease-wait, ms).
@@ -653,7 +670,7 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
 
       // Resolve tools via dep
       // the conversation is known once the session is resolved below; sandboxes open lazily
-      const { tools, executor, isInteractive } = await deps.resolveAgentTools(agentConfig, { sessionId: () => lease.sessionId ?? undefined });
+      const { tools, executor, isInteractive } = await deps.resolveAgentTools(agentConfig, { sessionId: () => lease.sessionId ?? undefined, origin });
       effectiveTools = tools;
       effectiveToolExecutor = executor;
       isInteractiveFn = isInteractive;
@@ -1323,6 +1340,7 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
                 turnId,
                 toolCallId: call.id,
                 sessionId: sessionId ?? undefined,
+                origin,
                 onProgress: async (progress) => {
                   if (abortController.signal.aborted) return;
                   await emit(sseChunk(completionId, {}, null, {
@@ -1788,6 +1806,7 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
               turnId: completionId,
               toolCallId: call.id,
               sessionId: sessionId ?? undefined,
+              origin,
             });
             const isError = result.startsWith("Error:");
             emitFileChanged(call.name, call.arguments, result, deps.emit);

@@ -13,6 +13,7 @@ import { FileLogStore } from "../stores/file-log-store.js";
 import { FileSessionStore } from "../stores/file-session-store.js";
 import { FileChatQueueStore } from "../stores/file-chat-queue-store.js";
 import { FileRoomStore } from "../stores/file-room-store.js";
+import { FileConversationCheckStore } from "../stores/file-conversation-check-store.js";
 import type { SessionStore } from "./session-store.js";
 import { FileCodingSessionStore } from "../stores/file-coding-session-store.js";
 import type { CodingSessionStore } from "./coding-session-store.js";
@@ -92,6 +93,7 @@ import { QualityController } from "../quality/quality-controller.js";
 import { Scheduler } from "../scheduling/scheduler.js";
 import { TaskWatcherManager } from "./task-watcher.js";
 import { BackgroundWaitManager, type BackgroundWaitContinuation } from "./background-wait-manager.js";
+import { ConversationCheckManager, type ConversationCheckRunner } from "./conversation-check-manager.js";
 import type { ApprovalRequest, ApprovalStatus, ChannelReplyTarget, NotificationAction } from "./types.js";
 import { EncryptedVaultStore } from "../vault/encrypted-store.js";
 import type { VaultStore } from "./vault-store.js";
@@ -175,6 +177,8 @@ export class Orchestrator extends TypedEmitter {
   private scheduler?: Scheduler;
   private watcherMgr?: TaskWatcherManager;
   private backgroundWaitMgr?: BackgroundWaitManager;
+  private conversationCheckMgr?: ConversationCheckManager;
+  private conversationCheckRunner?: ConversationCheckRunner;
   private backgroundWaitContinuation?: BackgroundWaitContinuation;
   private telegramPoller?: TelegramCallbackPoller;
   /** Pollers of dedicated-agent bots (extra Telegram channels with gateway.agent). */
@@ -473,6 +477,13 @@ export class Orchestrator extends TypedEmitter {
   getScheduler(): Scheduler | undefined { return this.scheduler; }
   getWatcherManager(): TaskWatcherManager | undefined { return this.watcherMgr; }
   getBackgroundWaitManager(): BackgroundWaitManager | undefined { return this.backgroundWaitMgr; }
+  /** Recurring checks agents run in a chat (schedule_check). */
+  getConversationCheckManager(): ConversationCheckManager | undefined { return this.conversationCheckMgr; }
+  /** How a check runs: a turn of its own chat session (set by the server, like background waits). */
+  setConversationCheckRunner(runner: ConversationCheckRunner): void {
+    this.conversationCheckRunner = runner;
+    this.conversationCheckMgr?.setRunner(runner);
+  }
   setBackgroundWaitContinuation(handler: BackgroundWaitContinuation): void {
     this.backgroundWaitContinuation = handler;
     this.backgroundWaitMgr?.setContinuation(handler);
@@ -1087,6 +1098,11 @@ export class Orchestrator extends TypedEmitter {
     this.watcherMgr.setActionExecutor(actionExecutor);
     this.watcherMgr.start();
 
+    this.conversationCheckMgr = new ConversationCheckManager(this.getConversationCheckStore(), (level, message) => this.emit("log", { level, message }));
+    this.conversationCheckMgr.setDelivery((check, text) => this.deliverCheckReport(check, text));
+    if (this.conversationCheckRunner) this.conversationCheckMgr.setRunner(this.conversationCheckRunner);
+    this.conversationCheckMgr.start();
+
     if (supportsBackgroundWaits(this.taskControlStore)) {
       this.backgroundWaitMgr = new BackgroundWaitManager(this, this.registry, this.taskControlStore);
       await this.backgroundWaitMgr.start();
@@ -1391,6 +1407,27 @@ export class Orchestrator extends TypedEmitter {
     return this.drizzleStores?.roomStore ?? (this.fileRoomStore ??= new FileRoomStore(this.polpoDir));
   }
   private fileRoomStore?: FileRoomStore;
+
+  /** Recurring chat checks: database-backed with sqlite/postgres, `.polpo/conversation-checks/` otherwise. */
+  getConversationCheckStore(): import("@polpo-ai/core").ConversationCheckStore {
+    return this.drizzleStores?.conversationCheckStore ?? (this.fileConversationCheckStore ??= new FileConversationCheckStore(this.polpoDir));
+  }
+  private fileConversationCheckStore?: FileConversationCheckStore;
+
+  /**
+   * A check's report: added to the chat it was asked in (the agent finds it there next time), sent to
+   * its Telegram chat or topic, and kept in the group's transcript for the other agents.
+   */
+  private async deliverCheckReport(check: import("@polpo-ai/core").ConversationCheck, text: string): Promise<void> {
+    const message = await this.sessionStore?.addMessage(check.sessionId, "assistant", text).catch(() => undefined);
+    if (message) this.emit("message:added", { sessionId: check.sessionId, messageId: message.id, role: "assistant" });
+    const target = check.target;
+    if (!target) return;
+    const poller = this.telegramPollersByChannel.get(target.channel);
+    if (!poller) throw new Error(`Channel "${target.channel}" is not running: the report is only in the chat session`);
+    await poller.sendMarkdown(target.chatId, text, undefined, undefined, target.threadId ? { threadId: target.threadId } : undefined);
+    if (target.conversation) await this.channelGateways.get(target.channel)?.recordConversationReport(target.conversation, text);
+  }
 
   /**
    * The group intent classifier (TypeSafe Jev), one for the instance: Telegram groups and web
@@ -1707,6 +1744,7 @@ export class Orchestrator extends TypedEmitter {
   stop(): void {
     this.stopped = true;
     this.backgroundWaitMgr?.dispose();
+    this.conversationCheckMgr?.dispose();
     this.engine?.stop();
   }
 
@@ -1718,6 +1756,7 @@ export class Orchestrator extends TypedEmitter {
     await this.hookRegistry.runBefore("orchestrator:shutdown", {});
     this.stopped = true;
     this.backgroundWaitMgr?.dispose();
+    this.conversationCheckMgr?.dispose();
     for (const key of [...this.chatWorkspaces.keys()]) await this.closeChatWorkspace(key, "shutdown");
     for (const { guard } of this.chatBrowserGuards.values()) await guard.close().catch(() => undefined);
     this.chatBrowserGuards.clear();
@@ -1786,6 +1825,7 @@ export class Orchestrator extends TypedEmitter {
     this.qualityController?.dispose();
     this.scheduler?.dispose();
     this.backgroundWaitMgr?.dispose();
+    this.conversationCheckMgr?.dispose();
     await this.registry.close?.();
     await this.runStore.close();
     this.emit("orchestrator:shutdown", {});
