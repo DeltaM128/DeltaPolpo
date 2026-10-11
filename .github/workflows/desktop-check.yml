@@ -1,8 +1,9 @@
 name: Desktop Check
 
-# Packages the desktop app on each OS (as the release does, without publishing) and starts the
-# bundled server the way the app starts it: from another folder, with NODE_PATH on the shipped
-# node_modules. On Linux it also runs in a clean container without Node.
+# Packages the desktop app on each OS (as the release does, without publishing), starts the bundled
+# server the way the app starts it (from another folder, with NODE_PATH on the shipped node_modules;
+# on Linux also in a clean container without Node), then opens the packaged app itself: its window
+# must load the UI from file:// and the UI must reach the server.
 on:
   pull_request:
     branches: [main, develop]
@@ -10,6 +11,8 @@ on:
       - 'ui/electron/**'
       - 'ui/binaries/**'
       - 'ui/package.json'
+      - 'ui/vite.config.ts'
+      - 'ui/index.html'
       - 'src/cli/**'
       - 'src/core/version.ts'
       - 'packages/server/src/routes/health.ts'
@@ -62,8 +65,9 @@ jobs:
           ./node_modules/.bin/tsc
           pnpm --filter @polpo-ai/react build
 
+      # as the release: Electron loads the UI from file://
       - name: Build UI
-        run: VITE_POLPO_API_URL=http://localhost:3890 pnpm exec vite build
+        run: POLPO_ELECTRON=1 VITE_POLPO_API_URL=http://localhost:3890 pnpm exec vite build
         working-directory: ui
 
       - name: Build sidecar
@@ -114,3 +118,27 @@ jobs:
           docker logs polpo
           echo "health: $BODY"
           echo "$BODY" | grep -q "\"version\":\"$EXPECTED\"" || { echo "expected version $EXPECTED"; exit 1; }
+
+      # The packaged app itself (smoke test mode in ui/electron/main.mjs): window, UI, server
+      - name: Open the packaged app
+        # the app gives up after 45 s on its own; this only stops a hung app (no `timeout` on macOS)
+        timeout-minutes: 6
+        run: |
+          case "$RUNNER_OS" in
+            Linux) APP="ui/release/linux-unpacked/ui"; RUN="xvfb-run -a" ;;
+            Windows) APP="ui/release/win-unpacked/Polpo.exe"; RUN="" ;;
+            macOS) APP="$(ls -d ui/release/mac*/Polpo.app | head -1)/Contents/MacOS/Polpo"; RUN="" ;;
+          esac
+          APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
+          WORK="$(mktemp -d)"
+          RESULT="$WORK/smoke.json"
+          WORK_ARG="$WORK/project"; RESULT_ARG="$RESULT"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then WORK_ARG="$(cygpath -w "$WORK_ARG")"; RESULT_ARG="$(cygpath -w "$RESULT")"; fi
+          set +e
+          POLPO_SMOKE_TEST="$RESULT_ARG" $RUN "$APP" --no-sandbox "$WORK_ARG" > "$WORK/app.log" 2>&1
+          CODE=$?
+          set -e
+          tail -40 "$WORK/app.log"
+          echo "--- smoke test result (exit $CODE)"
+          cat "$RESULT" 2>/dev/null || { echo "no result: the app did not finish the smoke test"; exit 1; }
+          node -e "process.exit(require(process.argv[1]).ok ? 0 : 1)" "$RESULT"
