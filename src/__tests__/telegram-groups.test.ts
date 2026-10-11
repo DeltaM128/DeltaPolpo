@@ -189,6 +189,13 @@ describe("ChannelGateway — groups", () => {
     expect(runner).toHaveBeenCalledTimes(1);
   });
 
+  it("tells the runner where the turn came from: a recurring check asked there reports to that topic", async () => {
+    const { say, lastTurn, peerStore } = setup();
+    peerStore.allowlist.add(GROUP_ID);
+    await say(ADA, "check the site every 2 minutes", { threadId: 4 });
+    expect(lastTurn().origin).toEqual({ channel: "default", chatId: String(GROUP.id), threadId: 4, conversation: `${GROUP_ID}:topic:4` });
+  });
+
   it("unaddressed messages become context for the next turn, once", async () => {
     const { say, lastTurn, peerStore } = setup();
     peerStore.allowlist.add(GROUP_ID);
