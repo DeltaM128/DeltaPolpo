@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-10-11 — Desktop Window, Group Media
+
+### Fixed
+- Desktop app: blank window in 0.4.2. The release built the UI for the web (absolute `/assets/…` paths, service worker), while Electron loads it from `file://`. It is now built with `POLPO_ELECTRON=1` (relative paths, no service worker) (#109)
+- Telegram groups: agents understand photos and voice notes. Every group message's media is downloaded and described once, whichever bot gets it first. Voice notes and audio are transcribed (Whisper or Deepgram, with the bot's agent's vault key or the env), and photos and files are saved in the workspace. The description goes into the transcript every agent reads, counts for intent, and goes into the addressed agent's turn (images still attached). Before, agents only saw `[photo]` / `[voice message]` (#108)
+
+### Changed
+- CI: Desktop Check also opens the packaged app on Linux, macOS and Windows. The window must load the UI and reach the server (#109)
+
 ## [0.4.2] — 2026-10-10 — Docker Images
 
 ### Fixed
