@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-10-11 — Checks, Voice, Reactions
+
+### Added
+- **Recurring checks in a chat** (`schedule_check`, `list_checks`, `cancel_check`, for agents and Polpo): "check every 2 minutes whether the site answers and tell us if it goes down".
+  - Each run is a turn of the check's own session, and a run with nothing to report (`NO_UPDATE`) stays silent.
+  - Reports go to the Telegram group, topic or chat where the check was asked, into the group's transcript, and into that chat session.
+  - Stored in a new `conversation_checks` table (SQLite/PostgreSQL migrations) or in `.polpo/conversation-checks/`.
+  - Before, agents promised to notify with no way to do it, and Polpo's schedules only reached the owner's chat (#112)
+- **Voice replies on Telegram**: `voiceReplies` per agent (and `settings.voiceReplies` for Polpo), `off` by default, `voice` (answer a voice message with one) or `always`.
+  - Sent as a real voice message (OpenAI TTS in Ogg/Opus, else ElevenLabs, else edge-tts), with the text as the caption.
+  - Agents know their setting and change it themselves with `set_voice_replies`; Polpo can change its own or an agent's (#114)
+- **Emoji reactions**: an answer that is a single emoji Telegram accepts (👍 ❤ 🔥 🎉 👀…) is put on the message as a reaction instead of being sent; agents are told so on Telegram turns (#116)
+- **`list_models`** for Polpo: searches the model catalog (built-in providers and custom gateways), by default only providers with credentials. Custom gateways now appear among the connected providers in its prompt (#113)
+
+### Changed
+- CI: Desktop Check uses the packaged app on Linux, macOS and Windows: a chat with Polpo answered by a mock model, and the main pages rendered without errors. On Windows it also builds the installer, installs it silently and uses the installed app (#115)
+
 ## [0.4.3] — 2026-10-11 — Desktop Window, Group Media
 
 ### Fixed
