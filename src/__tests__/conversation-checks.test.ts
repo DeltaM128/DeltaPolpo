@@ -108,8 +108,8 @@ describe("check tools", () => {
   it("schedule_check targets the chat the turn came from; list and cancel stay in that chat", async () => {
     const ctx = { manager, sessionId: "s1", agent: "ops", origin: { ...GROUP, threadId: 4, conversation: "telegram:group:-100123:topic:4" } };
     const created = await execScheduleCheck({ every_minutes: 2, instructions: "check https://example.com", max_runs: 30 }, ctx);
-    expect(created).toMatch(/^Check chk_\w+ scheduled every 2 min, .*Reports go to this Telegram group topic/);
-    const id = /chk_\w+/.exec(created)![0];
+    expect(created).toMatch(/^Check chk_[\w-]+ scheduled every 2 min, .*Reports go to this Telegram group topic/);
+    const id = /chk_[\w-]+/.exec(created)![0];
     expect(await store.getCheck(id)).toMatchObject({ agent: "ops", maxRuns: 30, target: ctx.origin });
 
     expect(await execListChecks(ctx)).toContain(`${id} [active] every 2 min (up to 30 runs)`);
