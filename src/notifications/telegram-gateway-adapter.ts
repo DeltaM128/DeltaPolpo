@@ -59,6 +59,10 @@ export class TelegramGatewayAdapter implements TelegramGatewayHandler {
     });
   }
 
+  async describeGroupMedia(chatId: string, messageId: string, attachments: InboundAttachment[]): Promise<{ text: string; transcribed: InboundAttachment[] }> {
+    return this.gateway.describeGroupMedia(chatId, messageId, attachments);
+  }
+
   async handleGroupEvent(event: TelegramGroupEvent): Promise<string | undefined> {
     if (event.kind === "joined") return this.gateway.handleGroupJoined("telegram", event.chatId, event.title, event.senderId);
     await this.gateway.handleGroupMigrated("telegram", event.chatId, event.fromChatId, event.title);
