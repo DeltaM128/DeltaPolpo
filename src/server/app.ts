@@ -40,6 +40,7 @@ import {
   internalCallHeaders,
   CHAT_ORIGIN_HEADER,
 } from "@polpo-ai/server";
+import { reactionHint } from "../notifications/telegram-reactions.js";
 // Node.js-only routes (stay in src/server/routes/)
 import { brandingConfigRoutes, publicConfigRoutes } from "./routes/config.js";
 import { filesystemRoutes } from "./routes/filesystem.js";
@@ -497,6 +498,8 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     completeLLM: completeSimpleWithAuth as any,
     resolveSummaryModel: (conversation: any, configured: string | undefined, promptTokens: number) =>
       resolveSummaryModel(conversation, configured, promptTokens),
+    // only Telegram turns carry an origin (see ChannelGateway.checkTarget)
+    channelTurnPrompt: () => `## Channel\nThis turn comes from Telegram: your answer is sent as a Telegram message. ${reactionHint()}`,
     resolveOrchestratorContext: async () => {
       const { buildChatSystemPrompt } = await import("../llm/prompts.js");
       const { resolveModel, resolveModelSpec, buildStreamOpts } = await import("../llm/pi-client.js");
