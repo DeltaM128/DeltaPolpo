@@ -141,7 +141,11 @@ jobs:
       # Windows as users get it: the installer, installed for the user, then the installed app used
       - name: Build the Windows installer
         if: matrix.platform == 'win'
-        run: pnpm exec electron-builder --win nsis --publish never
+        # the server started above still runs from win-unpacked: Windows cannot replace a running .exe
+        run: |
+          taskkill //F //IM polpo-server.exe 2>/dev/null || true
+          taskkill //F //IM Polpo.exe 2>/dev/null || true
+          pnpm exec electron-builder --win nsis --publish never
         working-directory: ui
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
