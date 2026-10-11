@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Agents learn from their conversations** (opt-in per agent, `learning`): every N new messages (default 30) or after a quiet period (default 30 min), the agent reviews its chats with its own model, keeps its memory current, and writes repeated procedures down as skills of its own (`create_my_skill` / `update_my_skill`, only skills it created).
+  - Every change is recorded with before and after, reported as an `agent:learned` event, and can be undone (agent page → Learning, or `POST /learning/:agent/changes/:id/revert`).
+  - The agent turns it on or off itself (`set_learning`) (#119)
+- In-app changelog (What's new) entries for everything since 2026-10-06
+
+### Fixed
+- The agent API (`POST`/`PATCH /agents`) dropped `learning` and `voiceReplies` (#119)
+
 ## [0.4.4] — 2026-10-11 — Checks, Voice, Reactions
 
 ### Added
