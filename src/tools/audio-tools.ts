@@ -153,38 +153,7 @@ async function transcribeOpenAI(
 ): Promise<ToolResult> {
   const apiKey = vault?.getKey("openai", "key") ?? requireEnv("OPENAI_API_KEY");
   const model = params.model ?? "whisper-1";
-
-  const fields: Record<string, string> = { model };
-  if (params.language) fields.language = params.language;
-  if (params.prompt) fields.prompt = params.prompt;
-  fields.response_format = "verbose_json";
-
-  const { body } = audioFormData(fileBuffer, filePath.split("/").pop()!, fields);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
-  if (signal) signal.addEventListener("abort", () => controller.abort(), { once: true });
-
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body,
-    signal: controller.signal,
-  });
-
-  clearTimeout(timer);
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenAI API ${response.status}: ${errText}`);
-  }
-
-  const data = await response.json() as {
-    text: string;
-    language?: string;
-    duration?: number;
-    segments?: { start: number; end: number; text: string }[];
-  };
+  const data = await openAITranscription(fileBuffer, filePath.split("/").pop()!, apiKey, { ...params, model }, signal);
 
   const info = [
     `Language: ${data.language ?? "unknown"}`,
@@ -204,6 +173,42 @@ async function transcribeOpenAI(
   };
 }
 
+async function openAITranscription(
+  fileBuffer: Buffer,
+  filename: string,
+  apiKey: string,
+  params: { model: string; language?: string; prompt?: string },
+  signal?: AbortSignal,
+): Promise<{ text: string; language?: string; duration?: number }> {
+  const { model } = params;
+  const fields: Record<string, string> = { model };
+  if (params.language) fields.language = params.language;
+  if (params.prompt) fields.prompt = params.prompt;
+  fields.response_format = "verbose_json";
+
+  const { body } = audioFormData(fileBuffer, filename, fields);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
+  if (signal) signal.addEventListener("abort", () => controller.abort(), { once: true });
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body,
+    signal: controller.signal,
+  });
+
+  clearTimeout(timer);
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`OpenAI API ${response.status}: ${errText}`);
+  }
+
+  return await response.json() as { text: string; language?: string; duration?: number };
+}
+
 async function transcribeDeepgram(
   filePath: string,
   fileBuffer: Buffer,
@@ -213,7 +218,34 @@ async function transcribeDeepgram(
 ): Promise<ToolResult> {
   const apiKey = vault?.getKey("deepgram", "key") ?? requireEnv("DEEPGRAM_API_KEY");
   const model = params.model ?? "nova-3";
+  const { transcript, confidence, duration } = await deepgramTranscription(fileBuffer, filePath, apiKey, { ...params, model }, signal);
 
+  const info = [
+    `Confidence: ${confidence ? `${(confidence * 100).toFixed(1)}%` : "unknown"}`,
+    `Duration: ${duration ? `${duration.toFixed(1)}s` : "unknown"}`,
+    `Model: ${model}`,
+  ].join(" | ");
+
+  return {
+    content: [{ type: "text", text: `${info}\n\n${transcript}` }],
+    details: {
+      provider: "deepgram",
+      model,
+      confidence,
+      duration,
+      textLength: transcript.length,
+    },
+  };
+}
+
+async function deepgramTranscription(
+  fileBuffer: Buffer,
+  filePath: string,
+  apiKey: string,
+  params: { model: string; language?: string },
+  signal?: AbortSignal,
+): Promise<{ transcript: string; confidence?: number; duration?: number }> {
+  const { model } = params;
   const queryParams = new URLSearchParams({
     model,
     smart_format: "true",
@@ -254,26 +286,29 @@ async function transcribeDeepgram(
     metadata?: { duration?: number; models?: string[] };
   };
 
-  const transcript = data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "";
-  const confidence = data.results?.channels?.[0]?.alternatives?.[0]?.confidence;
-  const duration = data.metadata?.duration;
-
-  const info = [
-    `Confidence: ${confidence ? `${(confidence * 100).toFixed(1)}%` : "unknown"}`,
-    `Duration: ${duration ? `${duration.toFixed(1)}s` : "unknown"}`,
-    `Model: ${model}`,
-  ].join(" | ");
-
   return {
-    content: [{ type: "text", text: `${info}\n\n${transcript}` }],
-    details: {
-      provider: "deepgram",
-      model,
-      confidence,
-      duration,
-      textLength: transcript.length,
-    },
+    transcript: data.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "",
+    confidence: data.results?.channels?.[0]?.alternatives?.[0]?.confidence,
+    duration: data.metadata?.duration,
   };
+}
+
+/**
+ * Speech to text outside the tool (voice notes arriving in a group): the first provider with a
+ * key (agent vault, then OPENAI_API_KEY / DEEPGRAM_API_KEY), or null when none has one.
+ */
+export async function transcribeSpeech(
+  audio: Buffer,
+  filename: string,
+  vault?: ResolvedVault,
+  signal?: AbortSignal,
+): Promise<{ text: string; provider: "openai" | "deepgram" } | null> {
+  if (audio.byteLength > MAX_AUDIO_SIZE) return null;
+  const openai = vault?.getKey("openai", "key") ?? process.env.OPENAI_API_KEY;
+  if (openai) return { text: (await openAITranscription(audio, filename, openai, { model: "whisper-1" }, signal)).text.trim(), provider: "openai" };
+  const deepgram = vault?.getKey("deepgram", "key") ?? process.env.DEEPGRAM_API_KEY;
+  if (deepgram) return { text: (await deepgramTranscription(audio, filename, deepgram, { model: "nova-3" }, signal)).transcript.trim(), provider: "deepgram" };
+  return null;
 }
 
 // ─── Tool: audio_speak ───

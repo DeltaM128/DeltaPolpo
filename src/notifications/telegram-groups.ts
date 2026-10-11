@@ -99,7 +99,7 @@ export function botJoined(message: TelegramMessage, me: TelegramIdentity | undef
   return !!me && (message.new_chat_members ?? []).some((u) => u.id === me.id);
 }
 
-/** Short stand-in for media in the group context ("[photo]"), since context files are not downloaded. */
+/** Short stand-in for media in the group context ("[photo]"), when it could not be downloaded and described. */
 export function mediaLabel(message: TelegramMessage): string | undefined {
   if (message.photo) return "[photo]";
   if (message.voice) return "[voice message]";

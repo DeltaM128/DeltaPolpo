@@ -29,6 +29,8 @@
  *           └── Chat completions (for free-text conversation)
  */
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { extname, join } from "node:path";
 import { nanoid } from "nanoid";
 import { sessionLeases } from "@polpo-ai/server";
 import type { Orchestrator } from "../core/orchestrator.js";
@@ -38,6 +40,8 @@ import type { ApprovalCallbackResolver, InboundAttachment } from "./channels/tel
 import type { InboundGroup } from "./telegram-groups.js";
 import type { GroupIntentArbiter, IntentCandidate } from "./group-intent.js";
 import type { RoomKind, RoomMessage, RoomStore } from "@polpo-ai/core";
+import { transcribeSpeech } from "../tools/audio-tools.js";
+import { loadAgentVaultEntries, resolveAgentVault } from "../vault/index.js";
 import type { TelegramAgentRelay } from "../rooms/telegram-relay.js";
 import type { AgentProfile } from "../rooms/room-engine.js";
 import { ROOM_TURN_LINES, roomTurnText } from "../rooms/transcript.js";
@@ -299,6 +303,41 @@ export class ChannelGateway {
     this.onTyping = opts.onTyping;
     this.key = opts.key ?? "default";
     this.roomStore = opts.roomStore;
+  }
+
+  /**
+   * A photo, voice note or file sent in a group, described in one line for the group's transcript, so
+   * every agent reads it, not only the one it was sent to. Files are saved once in the workspace (agents
+   * open them from there); voice notes are transcribed with this bot's agent's key (vault, then env).
+   */
+  async describeGroupMedia(chatId: string, messageId: string, attachments: InboundAttachment[]): Promise<{ text: string; transcribed: InboundAttachment[] }> {
+    const dir = join(this.orchestrator.getWorkDir(), "workspace", "attachments", `telegram-group${chatId.replace(/[^\w-]/g, "_")}`);
+    await mkdir(dir, { recursive: true });
+    const agent = this.gatewayConfig.agent;
+    const vault = agent ? resolveAgentVault(await loadAgentVaultEntries(this.orchestrator.getVaultStore(), agent)) : undefined;
+    const lines: string[] = [];
+    const transcribed: InboundAttachment[] = [];
+    for (const [i, a] of attachments.entries()) {
+      const ext = extname(a.filename).replace(/[^.\w]/g, "") || `.${a.mimeType.split("/")[1]?.replace(/\W/g, "") || "bin"}`;
+      const path = join(dir, `${messageId.replace(/\W/g, "_")}-${i + 1}${ext}`);
+      await writeFile(path, a.data);
+      if (a.kind === "voice" || a.kind === "audio") {
+        const label = a.kind === "voice" ? "voice message" : "audio";
+        const speech = await transcribeSpeech(a.data, a.filename, vault).catch((err: unknown) => {
+          this.log("warn", `transcription of a group ${label} failed: ${err instanceof Error ? err.message : String(err)}`);
+          return null;
+        });
+        if (speech?.text) {
+          lines.push(`[${label}, transcribed: "${speech.text}"]`);
+          transcribed.push(a);
+        } else {
+          lines.push(`[${label}, not transcribed (no speech-to-text key): ${path}]`);
+        }
+      } else {
+        lines.push(`[${a.kind === "document" ? `file ${a.filename}` : a.kind}: ${path}]`);
+      }
+    }
+    return { text: lines.join(" "), transcribed };
   }
 
   /** Emit a structured log via the orchestrator's event bus. */
