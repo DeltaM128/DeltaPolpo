@@ -168,7 +168,8 @@ jobs:
   # ── Finalize release notes ─────────────────────────────────────────
   release:
     name: Release Notes
-    needs: [build, docker, desktop]
+    # not on docker: the release (desktop apps) gets its notes even when the images cannot be pushed
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
