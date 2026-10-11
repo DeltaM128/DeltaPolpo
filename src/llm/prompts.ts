@@ -6,7 +6,7 @@ import type { Orchestrator } from "../core/orchestrator.js";
 import type { AgentConfig, PolpoState } from "../core/types.js";
 import { HOOK_EVENT_CATALOG, HOOK_EVENT_GLOBS } from "@polpo-ai/core";
 import { discoverSkills, loadOrchestratorSkills, buildSkillPrompt, type SkillInfo } from "./skills.js";
-import { buildModelListingForPrompt, resolveModelSpec } from "./pi-client.js";
+import { buildModelListingForPrompt, listModels, resolveModelSpec } from "./pi-client.js";
 import { readSystemContext } from "./orchestrator-tools.js";
 import { detectProviders } from "../setup/providers.js";
 import { inkRegistry } from "../core/ink-config.js";
@@ -47,7 +47,9 @@ function describeAgentCapabilities(agent: AgentConfig, skillPool?: SkillInfo[]):
 
 function buildConnectedProviderGuidance(orchestratorModel: string | undefined, agents: AgentConfig[]): string {
   const connected = detectProviders().filter((provider) => provider.hasKey);
-  const connectedNames = connected.map((provider) => `${provider.name} (${provider.source})`);
+  // custom gateways (OpenAI/Anthropic-compatible endpoints) with credentials count as connected too
+  const gateways = [...new Set(listModels().filter((model) => model.custom && model.configured !== false).map((model) => model.provider))];
+  const connectedNames = [...connected.map((provider) => `${provider.name} (${provider.source})`), ...gateways.map((id) => `${id} (custom gateway)`)];
   const agentModels = agents
     .map((agent) => agent.model)
     .filter((model): model is string => !!model);
@@ -55,7 +57,7 @@ function buildConnectedProviderGuidance(orchestratorModel: string | undefined, a
   return [
     `## Connected model providers`,
     ``,
-    connected.length > 0
+    connectedNames.length > 0
       ? `Connected providers with usable credentials: ${connectedNames.join(", ")}.`
       : `No connected providers were detected from env keys or OAuth profiles.`,
     orchestratorModel ? `Current orchestrator model: ${orchestratorModel}.` : `Current orchestrator model: not explicitly configured.`,
@@ -65,6 +67,8 @@ function buildConnectedProviderGuidance(orchestratorModel: string | undefined, a
     `If the user does not ask for a specific provider, prefer the current orchestrator model when its provider is connected.`,
     `If only one provider is connected, use a model from that provider unless the user explicitly says otherwise.`,
     `Do NOT invent or assign models from providers that are not connected, because those agents will fail at runtime.`,
+    `Use list_models to see the models actually available (connected providers and custom gateways; filter by provider,`,
+    `name, reasoning, vision, cost) before choosing a model or answering which models exist: do not guess model ids.`,
   ].join("\n");
 }
 
