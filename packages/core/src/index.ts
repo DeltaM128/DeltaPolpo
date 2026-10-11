@@ -214,6 +214,10 @@ export type {
   StorageRegistryChangeEvent, StorageRegistryChangeEmitter, StorageRegistryStore, StorageCredentials,
   StorageCredentialStatus, StorageAccessGrant, StorageVolumeSettings,
 } from "./storage-registry.js";
+export { CHECK_NOTHING_TO_REPORT, MIN_CHECK_INTERVAL_MINUTES, afterCheckRun } from "./conversation-checks.js";
+export type {
+  ConversationCheck, ConversationCheckState, ConversationCheckStore, ConversationCheckTarget, NewConversationCheck,
+} from "./conversation-checks.js";
 
 export { isVaultRef, normalizeVaultRef, describeVaultRef, resolveVaultRef, pickCredential, CREDENTIAL_NAMES } from "./vault-ref.js";
 export type { VaultRef } from "./vault-ref.js";

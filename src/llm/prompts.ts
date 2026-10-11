@@ -6,7 +6,7 @@ import type { Orchestrator } from "../core/orchestrator.js";
 import type { AgentConfig, PolpoState } from "../core/types.js";
 import { HOOK_EVENT_CATALOG, HOOK_EVENT_GLOBS } from "@polpo-ai/core";
 import { discoverSkills, loadOrchestratorSkills, buildSkillPrompt, type SkillInfo } from "./skills.js";
-import { buildModelListingForPrompt, resolveModelSpec } from "./pi-client.js";
+import { buildModelListingForPrompt, listModels, resolveModelSpec } from "./pi-client.js";
 import { readSystemContext } from "./orchestrator-tools.js";
 import { detectProviders } from "../setup/providers.js";
 import { inkRegistry } from "../core/ink-config.js";
@@ -48,7 +48,9 @@ function describeAgentCapabilities(agent: AgentConfig, skillPool?: SkillInfo[]):
 
 function buildConnectedProviderGuidance(orchestratorModel: string | undefined, agents: AgentConfig[]): string {
   const connected = detectProviders().filter((provider) => provider.hasKey);
-  const connectedNames = connected.map((provider) => `${provider.name} (${provider.source})`);
+  // custom gateways (OpenAI/Anthropic-compatible endpoints) with credentials count as connected too
+  const gateways = [...new Set(listModels().filter((model) => model.custom && model.configured !== false).map((model) => model.provider))];
+  const connectedNames = [...connected.map((provider) => `${provider.name} (${provider.source})`), ...gateways.map((id) => `${id} (custom gateway)`)];
   const agentModels = agents
     .map((agent) => agent.model)
     .filter((model): model is string => !!model);
@@ -56,7 +58,7 @@ function buildConnectedProviderGuidance(orchestratorModel: string | undefined, a
   return [
     `## Connected model providers`,
     ``,
-    connected.length > 0
+    connectedNames.length > 0
       ? `Connected providers with usable credentials: ${connectedNames.join(", ")}.`
       : `No connected providers were detected from env keys or OAuth profiles.`,
     orchestratorModel ? `Current orchestrator model: ${orchestratorModel}.` : `Current orchestrator model: not explicitly configured.`,
@@ -66,6 +68,8 @@ function buildConnectedProviderGuidance(orchestratorModel: string | undefined, a
     `If the user does not ask for a specific provider, prefer the current orchestrator model when its provider is connected.`,
     `If only one provider is connected, use a model from that provider unless the user explicitly says otherwise.`,
     `Do NOT invent or assign models from providers that are not connected, because those agents will fail at runtime.`,
+    `Use list_models to see the models actually available (connected providers and custom gateways; filter by provider,`,
+    `name, reasoning, vision, cost) before choosing a model or answering which models exist: do not guess model ids.`,
   ].join("\n");
 }
 
@@ -1074,6 +1078,10 @@ export async function buildChatSystemPrompt(
     `- Recurring on events: "every time a mission completes, notify ops" → add_notification_rule.`,
     `- Mission-scoped: "for this specific mission only, alert me on every checkpoint" → update_mission_notifications.`,
     `- Cron / time-based: "every Monday at 9am send the weekly digest" → create_schedule.`,
+    `- Recurring check in this chat: "every 2 minutes check whether the site answers and tell us if it goes down"`,
+    `  → schedule_check. It reports in the chat it was asked in (a Telegram group or topic too) and stays silent`,
+    `  when there is nothing to report; send_notification and schedules only reach the configured channels.`,
+    `  Never promise to notify later without one of these tools: nothing happens after this turn.`,
     `- Automation chain with NO message: "when quality:gate:failed, auto-create a fix task" →`,
     `  add_notification_rule with channels:[] + actions:[{type:"create_task", ...}].`,
     `- Free-form direct send: "remind me in 5 minutes" → send_notification with delayMs=300000.`,
@@ -1081,7 +1089,7 @@ export async function buildChatSystemPrompt(
     `**Reminders**: When the user asks "remind me in X minutes to do Y", use send_notification`,
     `with delayMs. Example: "remind me in 5 minutes" → send_notification with delayMs=300000,`,
     `title="Reminder", body="<what the user asked>". Always confirm the reminder was set.`,
-    `For recurring reminders, use create_schedule with a cron expression instead.`,
+    `For recurring reminders in this chat or group, use schedule_check; create_schedule runs missions.`,
     ``,
     `**Task waiting and watchers**: wait_for_task, watch_task, list_watchers, remove_watcher.`,
     `wait_for_task blocks the current tool call until the task reaches targetStatus, or done/failed`,

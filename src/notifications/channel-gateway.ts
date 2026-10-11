@@ -39,9 +39,8 @@ import type { SessionStore } from "../core/session-store.js";
 import type { ApprovalCallbackResolver, InboundAttachment } from "./channels/telegram.js";
 import type { InboundGroup } from "./telegram-groups.js";
 import type { GroupIntentArbiter, IntentCandidate } from "./group-intent.js";
-import type { RoomKind, RoomMessage, RoomStore } from "@polpo-ai/core";
+import type { ConversationCheckTarget, RoomKind, RoomMessage, RoomStore, VoiceReplyMode } from "@polpo-ai/core";
 import { synthesizeSpeech, transcribeSpeech } from "../tools/audio-tools.js";
-import type { VoiceReplyMode } from "@polpo-ai/core";
 import { loadAgentVaultEntries, resolveAgentVault } from "../vault/index.js";
 import type { TelegramAgentRelay } from "../rooms/telegram-relay.js";
 import type { AgentProfile } from "../rooms/room-engine.js";
@@ -200,6 +199,8 @@ export interface ChannelChatRequest {
   sessionId: string;
   /** Conversation history including the new user message, oldest first. */
   messages: { role: "user" | "assistant"; content: string | ChannelContentPart[] }[];
+  /** Where this turn came from: a recurring check asked in it reports there. */
+  origin?: ConversationCheckTarget;
 }
 
 /** A file the turn produced for the user (e.g. via open_file), already resolved and checked by the host. */
@@ -520,6 +521,20 @@ export class ChannelGateway {
   }
 
   /** Conversation key: the person in a DM; the group, and its topic, in a group. */
+  /**
+   * Where a recurring check asked in this message reports: this bot, this chat and topic, and for a
+   * group its transcript. Only Telegram delivers check reports; elsewhere they stay in the session.
+   */
+  private checkTarget(msg: InboundMessage): ConversationCheckTarget | undefined {
+    if (msg.channel !== "telegram") return undefined;
+    return {
+      channel: this.key,
+      chatId: msg.chatId,
+      ...(msg.group?.threadId !== undefined ? { threadId: msg.group.threadId } : {}),
+      ...(msg.group ? { conversation: this.conversationId(msg, `${msg.channel}:${msg.externalId}`) } : {}),
+    };
+  }
+
   private conversationId(msg: InboundMessage, peerId: string): string {
     if (!msg.group) return peerId;
     return msg.group.threadId !== undefined ? `${this.groupId(msg)}:topic:${msg.group.threadId}` : this.groupId(msg);
@@ -750,6 +765,17 @@ export class ChannelGateway {
   }
 
   /** This bot's reply into the room, answering the person's (or agent's) message. */
+  /** A recurring check's report posted in a group: kept in its transcript, as this bot's agent speaking. */
+  async recordConversationReport(conversation: string, text: string): Promise<void> {
+    if (!this.roomStore || !text.trim()) return;
+    try {
+      const me = await this.speaker(conversation);
+      await this.roomStore.addMessage(conversation, { authorKind: "agent", authorId: me.id, authorName: me.name, text });
+    } catch (err) {
+      this.log("warn", `Room ${conversation}: could not store a check report: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async recordAgentReply(msg: InboundMessage, reply: string | undefined): Promise<RoomMessage | undefined> {
     if (!this.roomStore || !msg.roomMessageId || !reply?.trim()) return undefined;
     const conversation = this.conversationId(msg, `${msg.channel}:${msg.externalId}`);
@@ -1544,7 +1570,7 @@ export class ChannelGateway {
 
         for (const call of toolCalls) {
 
-          const result = await executeOrchestratorTool(call.name, call.arguments, this.orchestrator);
+          const result = await executeOrchestratorTool(call.name, call.arguments, this.orchestrator, { sessionId, origin: this.checkTarget(msg) });
           messages.push({
             role: "toolResult",
             toolCallId: call.id,
@@ -1608,7 +1634,7 @@ export class ChannelGateway {
     messages.push({ role: "user", content: attachments.length > 0 ? attachmentContent(msg.text, attachments.slice(0, 5)) : msg.text });
 
     if (this.onTyping) await this.onTyping(msg.chatId, this.sendTarget(msg));
-    const { text, files = [] } = await runner({ agent, sessionId, messages });
+    const { text, files = [] } = await runner({ agent, sessionId, messages, origin: this.checkTarget(msg) });
 
     const body = text.trim();
     const reply = body || (files.length > 0 ? "" : `${who} processed your request but has nothing to say.`);

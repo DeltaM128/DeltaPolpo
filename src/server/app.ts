@@ -38,6 +38,7 @@ import {
   createTurnScheduler,
   sessionLeases,
   internalCallHeaders,
+  CHAT_ORIGIN_HEADER,
 } from "@polpo-ai/server";
 // Node.js-only routes (stay in src/server/routes/)
 import { brandingConfigRoutes, publicConfigRoutes } from "./routes/config.js";
@@ -299,7 +300,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
         + sandboxPromptNote(sandbox, remote ? volumes.filter((v) => v.remote) : volumes.filter((v) => v.hostPath),
           remote ? { outputDir: o.chatOutputDir(agentConfig.name) } : {});
     },
-    resolveAgentTools: async (agentConfig: any, context?: { sessionId: () => string | undefined }) => {
+    resolveAgentTools: async (agentConfig: any, context?: { sessionId: () => string | undefined; origin?: import("@polpo-ai/core").ConversationCheckTarget }) => {
       const { createAllTools } = await import("../tools/system-tools.js");
       const { createMemoryTools } = await import("../tools/memory-tools.js");
       const { createDataAgentTools } = await import("../tools/data-tools.js");
@@ -436,6 +437,13 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
         tools.push(createVoiceReplyTool(agentConfig.voiceReplies, async (mode) => {
           await o.updateAgent(agentConfig.name, { voiceReplies: mode });
         }));
+      }
+      // Recurring checks in this chat ("check every 2 minutes and tell us"): reports go where the turn came from
+      if (!existingToolNames.has("schedule_check")) {
+        const { createConversationCheckTools } = await import("../tools/conversation-check-tools.js");
+        tools.push(...createConversationCheckTools(() => ({
+          manager: o.getConversationCheckManager(), sessionId: context?.sessionId?.(), agent: agentConfig.name, origin: context?.origin,
+        })));
       }
       // Opt-in `render_widget` per agente, via allowedTools (es.
       // `["read","write","render_widget"]` in polpo.json). NON è nei
@@ -599,13 +607,63 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     return "completed";
   });
 
+  // A recurring check runs as a turn of its own session (it remembers its earlier runs and keeps
+  // the "nothing to report" answers out of the chat it was asked in).
+  o?.setConversationCheckRunner(async (check, signal) => {
+    const sessions = o.getSessionStore();
+    if (!sessions) throw new Error("Chat sessions are not available");
+    let runSessionId = check.runSessionId;
+    if (!runSessionId || !(await sessions.getSession(runSessionId))) {
+      runSessionId = await sessions.create(`Check: ${check.prompt.slice(0, 50)}`, check.agent, { scope: `check:${check.id}` });
+      await o.getConversationCheckManager()?.setRunSession(check.id, runSessionId);
+    }
+    if (sessionLeases.isHeld(runSessionId)) return "deferred";
+    const { CHECK_NOTHING_TO_REPORT } = await import("@polpo-ai/core");
+    const where = check.target?.conversation ? "a Telegram group" : check.target ? "a Telegram chat" : "a chat";
+    const instruction = [
+      `[Recurring check ${check.id}: run ${check.runs + 1}, every ${check.everyMinutes} min, asked in ${where}]`,
+      check.prompt,
+      "",
+      `Do it now. If there is nothing worth telling the chat, answer exactly ${CHECK_NOTHING_TO_REPORT} and nothing else.`,
+      "Otherwise answer only with the message for the chat: it is posted as you write it.",
+      "Do not repeat what you already reported in an earlier run unless something changed.",
+    ].join("\n");
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-session-id": runSessionId,
+      ...internalCallHeaders(),
+    };
+    if (opts?.apiKeys?.[0]) headers.authorization = `Bearer ${opts.apiKeys[0]}`;
+    const history = await sessions.getMessages(runSessionId);
+    const response = await completionApp.request(new Request("http://polpo.internal/", {
+      method: "POST",
+      headers,
+      signal,
+      body: JSON.stringify({
+        stream: false,
+        ...(check.agent ? { agent: check.agent } : {}),
+        messages: [
+          ...history.filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role, content: m.content })),
+          { role: "user", content: instruction },
+        ],
+      }),
+    }));
+    if (response.status === 409) return "deferred";
+    const payload = await response.json().catch(() => null) as any;
+    if (!response.ok) throw new Error(payload?.error?.message ?? payload?.error ?? `Check run failed (${response.status})`);
+    const content = payload?.choices?.[0]?.message?.content;
+    return { text: typeof content === "string" ? content : "" };
+  });
+
   // Messaging channels (Telegram, WhatsApp) run agent turns, and any turn with
   // media, through the same completions pipeline as the web UI: prompt, memory,
   // tools, compaction, attachment storage and persistence stay identical.
-  o?.setChannelChatRunner(async ({ agent, sessionId, messages }) => {
+  o?.setChannelChatRunner(async ({ agent, sessionId, messages, origin }) => {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       "x-session-id": sessionId,
+      // where the turn came from: a recurring check asked in it reports there
+      ...(origin ? { [CHAT_ORIGIN_HEADER]: encodeURIComponent(JSON.stringify(origin)) } : {}),
       // One turn per session: a channel message waits for the running answer instead of failing.
       "x-polpo-lease-wait": String(10 * 60 * 1000),
       ...internalCallHeaders(),

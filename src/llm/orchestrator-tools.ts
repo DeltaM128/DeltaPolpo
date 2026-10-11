@@ -59,6 +59,10 @@ import { normalizeSandboxSettings, type EffectiveSandbox } from "@polpo-ai/core/
 import { loadPolpoConfig, savePolpoConfig } from "../core/config.js";
 import { inkApiUrl, inkRegistry } from "../core/ink-config.js";
 import { VOICE_REPLY_MODES, isVoiceReplyMode } from "../tools/voice-reply-tools.js";
+import {
+  CANCEL_CHECK_DESCRIPTION, CancelCheckSchema, LIST_CHECKS_DESCRIPTION, ListChecksSchema, SCHEDULE_CHECK_DESCRIPTION, ScheduleCheckSchema,
+  execCancelCheck, execListChecks, execScheduleCheck,
+} from "../tools/conversation-check-tools.js";
 
 export interface OrchestratorToolProgress {
   message: string;
@@ -73,6 +77,8 @@ export interface OrchestratorToolExecutionContext {
   turnId?: string;
   toolCallId?: string;
   sessionId?: string;
+  /** Where the turn came from (a Telegram chat or topic): recurring checks report there. */
+  origin?: import("@polpo-ai/core").ConversationCheckTarget;
 }
 
 
@@ -1060,6 +1066,67 @@ async function execSetVoiceReplies(polpo: Orchestrator, args: Record<string, unk
 }
 
 // ═══════════════════════════════════════════════════════
+//  CONVERSATION CHECKS (3): recurring checks reported in the chat they were asked in
+// ═══════════════════════════════════════════════════════
+
+const scheduleCheckTool: Tool = { name: "schedule_check", description: SCHEDULE_CHECK_DESCRIPTION, parameters: ScheduleCheckSchema };
+const listChecksTool: Tool = { name: "list_checks", description: LIST_CHECKS_DESCRIPTION, parameters: ListChecksSchema };
+const cancelCheckTool: Tool = { name: "cancel_check", description: CANCEL_CHECK_DESCRIPTION, parameters: CancelCheckSchema };
+
+// ═══════════════════════════════════════════════════════
+//  MODEL CATALOG
+// ═══════════════════════════════════════════════════════
+
+const listModelsTool: Tool = {
+  name: "list_models",
+  description: "Search the model catalog (every built-in provider and the custom gateways of this instance) before choosing a model for an agent or answering which models are available. "
+    + "By default only providers with working credentials are listed. Returns \"provider:model\" ids with context window, price per million tokens and capabilities.",
+  parameters: Type.Object({
+    provider: Type.Optional(Type.String({ description: "Only this provider (e.g. \"anthropic\", \"openrouter\", a custom gateway id)" })),
+    search: Type.Optional(Type.String({ description: "Words to match in the model id or name (e.g. \"sonnet\", \"flash\", \"gpt-5\")" })),
+    reasoning: Type.Optional(Type.Boolean({ description: "Only reasoning models" })),
+    vision: Type.Optional(Type.Boolean({ description: "Only models that accept images" })),
+    connected_only: Type.Optional(Type.Boolean({ description: "Only providers with credentials (default true); false to see the whole catalog" })),
+    sort: Type.Optional(Type.Union([Type.Literal("cost"), Type.Literal("context")], { description: "Cheapest first (cost) or largest context first (context); default: by provider" })),
+    limit: Type.Optional(Type.Number({ description: "Max models to return (default 30, max 200)" })),
+  }),
+};
+
+/** Built-in providers with credentials (env, ambient or an OAuth login). */
+function connectedProviders(): Set<string> {
+  return new Set(detectProviders().filter((provider) => provider.hasKey).map((provider) => provider.name));
+}
+
+/** Catalog search for the orchestrator (list_models). Exported for tests. */
+export function execListModels(args: Record<string, unknown>, connected: () => Set<string> = connectedProviders): string {
+  const connectedOnly = args.connected_only !== false;
+  const builtinConnected = connectedOnly ? connected() : new Set<string>();
+  const words = String(args.search ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 200);
+  let models = listModels(typeof args.provider === "string" && args.provider ? args.provider : undefined)
+    .filter((m) => !connectedOnly || (m.custom ? m.configured !== false : builtinConnected.has(m.provider)))
+    .filter((m) => words.every((w) => `${m.provider}:${m.id} ${m.name}`.toLowerCase().includes(w)))
+    .filter((m) => !args.reasoning || m.reasoning)
+    .filter((m) => !args.vision || m.input.includes("image"));
+  if (args.sort === "cost") models = [...models].sort((a, b) => (a.cost.input + a.cost.output) - (b.cost.input + b.cost.output));
+  if (args.sort === "context") models = [...models].sort((a, b) => b.contextWindow - a.contextWindow);
+  if (models.length === 0) {
+    return connectedOnly
+      ? "No models match among the connected providers. Try connected_only=false to search the whole catalog (those providers need credentials first)."
+      : "No models match.";
+  }
+  const k = (n: number) => n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`;
+  const price = (n: number) => `$${+n.toFixed(2)}`;
+  const lines = models.slice(0, limit).map((m) => {
+    const tags = [m.reasoning ? "reasoning" : "", m.input.includes("image") ? "vision" : "", m.custom ? "custom gateway" : "",
+      m.cost.input === 0 && m.cost.output === 0 ? "free" : ""].filter(Boolean);
+    return `- ${m.provider}:${m.id} — ${m.name} | context ${k(m.contextWindow)} | in ${price(m.cost.input)} / out ${price(m.cost.output)} per M tokens${tags.length ? ` | ${tags.join(", ")}` : ""}`;
+  });
+  const more = models.length > limit ? `\n… and ${models.length - limit} more: narrow with provider or search, or raise limit.` : "";
+  return `${models.length} model(s)${connectedOnly ? " from connected providers" : ""}:\n${lines.join("\n")}${more}`;
+}
+
+// ═══════════════════════════════════════════════════════
 //  SCHEDULING TOOLS (4)
 // ═══════════════════════════════════════════════════════
 
@@ -1941,7 +2008,7 @@ export const READ_TOOLS = new Set([
   "list_agents", "get_team", "get_memory", "get_config",
   "list_approvals", "list_checkpoints", "list_delays", "get_logs",
   // Read-only listing tools
-  "list_schedules", "list_notification_rules", "list_watchers", "wait_for_task",
+  "list_schedules", "list_checks", "list_models", "list_notification_rules", "list_watchers", "wait_for_task",
   // Skills (read-only)
   "list_orchestrator_skills", "list_agent_skills", "search_skills", "get_skill",
   // Playbooks (read-only)
@@ -1978,6 +2045,8 @@ export const WRITE_TOOLS = new Set([
   "create_schedule", "delete_schedule", "update_schedule",
   // Voice replies
   "set_voice_replies",
+  // Conversation checks
+  "schedule_check", "cancel_check",
   // Notification rules
   "add_notification_rule", "remove_notification_rule", "send_notification",
   // Task watchers
@@ -2103,6 +2172,10 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
   createScheduleTool, deleteScheduleTool, updateScheduleTool,
   // Voice replies
   setVoiceRepliesTool,
+  // Conversation checks
+  scheduleCheckTool, listChecksTool, cancelCheckTool,
+  // Model catalog
+  listModelsTool,
   // Notification rules (2 write + 1 read above + 1 direct send)
   addNotificationRuleTool, removeNotificationRuleTool, sendNotificationTool,
   // Task watchers (2 write + 2 read above)
@@ -2246,6 +2319,10 @@ const TOOL_LABELS: Record<string, string> = {
   delete_schedule: "Delete Schedule",
   update_schedule: "Update Schedule",
   set_voice_replies: "Set Voice Replies",
+  schedule_check: "Schedule Check",
+  list_checks: "List Checks",
+  cancel_check: "Cancel Check",
+  list_models: "List Models",
   // Notification rules
   add_notification_rule: "Add Notification Rule",
   remove_notification_rule: "Remove Notification Rule",
@@ -2498,6 +2575,12 @@ export async function executeOrchestratorTool(
       case "delete_schedule":      return execDeleteSchedule(polpo, args);
       case "update_schedule":      return execUpdateSchedule(polpo, args);
       case "set_voice_replies":    return execSetVoiceReplies(polpo, args);
+      case "list_models":          return execListModels(args);
+
+      // ── Conversation checks (this chat) ──
+      case "schedule_check": return execScheduleCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId, origin: context.origin });
+      case "list_checks":    return execListChecks({ manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
+      case "cancel_check":   return execCancelCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
 
       // ── Notification Rules ──
       case "add_notification_rule":    return execAddNotificationRule(polpo, args);

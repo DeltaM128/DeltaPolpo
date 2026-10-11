@@ -261,6 +261,10 @@
     "./storage-registry": {
       "types": "./dist/storage-registry.d.ts",
       "import": "./dist/storage-registry.js"
+    },
+    "./conversation-checks": {
+      "types": "./dist/conversation-checks.d.ts",
+      "import": "./dist/conversation-checks.js"
     }
   },
   "sideEffects": false,
