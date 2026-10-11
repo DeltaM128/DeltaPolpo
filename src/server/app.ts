@@ -432,6 +432,13 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       if (!existingToolNames.has("ask_user")) {
         tools.push(askUserTool);
       }
+      // Voice replies on Telegram: off by default, the agent knows its mode and changes it when asked
+      if (!existingToolNames.has("set_voice_replies")) {
+        const { createVoiceReplyTool } = await import("../tools/voice-reply-tools.js");
+        tools.push(createVoiceReplyTool(agentConfig.voiceReplies, async (mode) => {
+          await o.updateAgent(agentConfig.name, { voiceReplies: mode });
+        }));
+      }
       // Recurring checks in this chat ("check every 2 minutes and tell us"): reports go where the turn came from
       if (!existingToolNames.has("schedule_check")) {
         const { createConversationCheckTools } = await import("../tools/conversation-check-tools.js");

@@ -39,8 +39,8 @@ import type { SessionStore } from "../core/session-store.js";
 import type { ApprovalCallbackResolver, InboundAttachment } from "./channels/telegram.js";
 import type { InboundGroup } from "./telegram-groups.js";
 import type { GroupIntentArbiter, IntentCandidate } from "./group-intent.js";
-import type { ConversationCheckTarget, RoomKind, RoomMessage, RoomStore } from "@polpo-ai/core";
-import { transcribeSpeech } from "../tools/audio-tools.js";
+import type { ConversationCheckTarget, RoomKind, RoomMessage, RoomStore, VoiceReplyMode } from "@polpo-ai/core";
+import { synthesizeSpeech, transcribeSpeech } from "../tools/audio-tools.js";
 import { reactionHint, reactionOf } from "./telegram-reactions.js";
 import { loadAgentVaultEntries, resolveAgentVault } from "../vault/index.js";
 import type { TelegramAgentRelay } from "../rooms/telegram-relay.js";
@@ -103,6 +103,8 @@ interface InboundMessage {
   group?: InboundGroup;
   /** The message as stored in its room (groups with a room store). */
   roomMessageId?: string;
+  /** The person wrote with a voice message (voice replies in "voice" mode answer with one). */
+  voice?: boolean;
 }
 
 /** A group message that was not addressed to the bot, kept as context for the next turn. */
@@ -134,6 +136,8 @@ export interface GatewayReply {
   files?: ChannelOutboundFile[];
   /** Set when the reply was delivered through another channel (nothing to send here). */
   deliveredTo?: string;
+  /** The reply spoken (voice replies): channels that can send it as a voice message, with the text as caption. */
+  voice?: { data: Buffer; mimeType: string; filename: string };
 }
 
 /** What a reply router delivers to the target channel of a conversation pipe. */
@@ -232,6 +236,20 @@ const VISION_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gi
 const ATTACHMENT_LABEL: Record<InboundAttachment["kind"], string> = {
   photo: "a photo", document: "a file", voice: "a voice message", audio: "an audio file", video: "a video",
 };
+
+/** What a voice reply says: the text without markdown, code blocks or link targets, within the TTS limit. */
+export function speakableText(text: string): string {
+  const plain = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/[*_~>|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length > 4000 ? `${plain.slice(0, 3990)}…` : plain;
+}
 
 /** Build the user turn: caption (or a short description) plus image/file parts. */
 export function attachmentContent(text: string, attachments: InboundAttachment[]): ChannelContentPart[] {
@@ -341,6 +359,33 @@ export class ChannelGateway {
       }
     }
     return { text: lines.join(" "), transcribed };
+  }
+
+  /**
+   * Voice replies (Telegram): the answering agent's preference (Polpo's settings for Polpo), "off" by
+   * default; "voice" speaks the answer to a voice message, "always" every answer. The text stays as the
+   * caption. Without a text-to-speech provider (OpenAI, ElevenLabs keys or edge-tts) it stays text.
+   */
+  private async withVoice(msg: InboundMessage, conversation: string, reply: string | GatewayReply | undefined): Promise<string | GatewayReply | undefined> {
+    if (msg.channel !== "telegram" || !reply) return reply;
+    const out = typeof reply === "string" ? { text: reply } : reply;
+    // a lone emoji becomes a reaction, not something to say
+    if (!out.text.trim() || out.buttons || out.forceReply || out.deliveredTo || reactionOf(out.text)) return reply;
+    const agent = await this.getActiveAgent(conversation);
+    const mode: VoiceReplyMode = agent
+      ? (await this.orchestrator.getAgents()).find((a) => a.name === agent)?.voiceReplies ?? "off"
+      : this.orchestrator.getConfig()?.settings?.voiceReplies ?? "off";
+    if (mode === "off" || (mode === "voice" && !msg.voice)) return reply;
+    const vault = agent ? resolveAgentVault(await loadAgentVaultEntries(this.orchestrator.getVaultStore(), agent)) : undefined;
+    const speech = await synthesizeSpeech(speakableText(out.text), vault).catch((err: unknown) => {
+      this.log("warn", `voice reply failed, sending text: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
+    if (!speech) {
+      this.log("warn", "voice reply skipped: no text-to-speech provider (OPENAI_API_KEY, ELEVENLABS_API_KEY or edge-tts)");
+      return reply;
+    }
+    return { ...out, voice: { data: speech.data, mimeType: speech.mimeType, filename: speech.filename } };
   }
 
   /** Emit a structured log via the orchestrator's event bus. */
@@ -1355,7 +1400,7 @@ export class ChannelGateway {
   private async handleChat(msg: InboundMessage, conversation: string): Promise<string | GatewayReply | undefined> {
     if (msg.group) msg = { ...msg, text: this.roomStore ? await this.roomTurnText(msg, conversation) : this.groupTurnText(msg, conversation) };
     const target = this.replyTargetFor(msg);
-    if (!target || !this.replyRouter) return this.runChat(msg, conversation);
+    if (!target || !this.replyRouter) return this.withVoice(msg, conversation, await this.runChat(msg, conversation));
     const route = this.replyRouter;
     const deliver = (event: ReplyRouteEvent) => route(target, event).catch(err => {
       this.log("warn", `Reply route to "${target.channel}" failed: ${err instanceof Error ? err.message : String(err)}`);

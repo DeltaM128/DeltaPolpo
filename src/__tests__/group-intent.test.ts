@@ -227,7 +227,7 @@ describe("TelegramCallbackPoller — joining in by intent", () => {
     const { handle, handler, sent } = poller(true);
     await handle();
     expect(handler.joinsByIntent).toHaveBeenCalledWith("7", "-100123", "how did the campaign go?", "Ada", "42", { title: "Team", threadId: undefined, addressed: false, members: 2 });
-    expect(handler.handleInboundMessage).toHaveBeenCalledWith("7", "-100123", "how did the campaign go?", "Ada", "42", [], { title: "Team", threadId: undefined, addressed: true });
+    expect(handler.handleInboundMessage).toHaveBeenCalledWith("7", "-100123", "how did the campaign go?", "Ada", "42", [], { title: "Team", threadId: undefined, addressed: true }, false);
     expect(sent.find((s) => s.method === "sendMessage")!.body).toMatchObject({ reply_parameters: { message_id: 42 } });
   });
 
