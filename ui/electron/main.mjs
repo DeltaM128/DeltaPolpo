@@ -265,9 +265,14 @@ function createWindow() {
 
 // ── Smoke test ──────────────────────────────────────────────────────────
 
+/** Pages the usage check opens: each must render without hitting an error boundary. */
+const SMOKE_PAGES = ["dashboard", "chat", "agents", "tasks", "missions", "skills", "memory", "schedules", "events", "files", "config"];
+
 /**
  * The window must load every local file (no file:// errors), render the app into #root and reach the
- * server (an API request answered without error) within 45 s. The result goes to SMOKE_RESULT.
+ * server (an API request answered without error) within 45 s. With POLPO_SMOKE_CHAT_REPLY it is also
+ * used: a chat message to Polpo must get that reply (the CI runs a mock model), and the main pages
+ * must render without an error boundary. The result goes to SMOKE_RESULT.
  */
 function watchSmokeTest(win) {
   const fileErrors = [];
@@ -292,13 +297,42 @@ function watchSmokeTest(win) {
       if (rendered > 0 && apiOk.length > 0) break;
       await new Promise((r) => setTimeout(r, 500));
     }
-    const ok = fileErrors.length === 0 && rendered > 0 && apiOk.length > 0;
-    const result = { ok, rendered, api: apiOk.slice(0, 5), fileErrors, consoleErrors: consoleErrors.slice(0, 20) };
+    const loaded = fileErrors.length === 0 && rendered > 0 && apiOk.length > 0;
+    const usage = loaded && process.env.POLPO_SMOKE_CHAT_REPLY ? await smokeUsage(win, process.env.POLPO_SMOKE_CHAT_REPLY) : undefined;
+    const ok = loaded && (!usage || usage.ok);
+    const result = { ok, rendered, api: apiOk.slice(0, 5), fileErrors, usage, consoleErrors: consoleErrors.slice(0, 20) };
     writeFileSync(SMOKE_RESULT, JSON.stringify(result, null, 2));
     console.log("[Polpo] smoke test:", JSON.stringify(result));
     killServer();
     app.exit(ok ? 0 : 1);
   });
+}
+
+/** Use the app as a person would: a chat turn through the UI's API base, then the main pages. */
+async function smokeUsage(win, expectedReply) {
+  const run = (code) => win.webContents.executeJavaScript(code);
+  // the same base URL and endpoint the chat page uses (VITE_POLPO_API_URL)
+  const chat = await run(`fetch("http://localhost:${SERVER_PORT}/v1/chat/completions", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stream: false, messages: [{ role: "user", content: "Hello from the desktop smoke test" }] }),
+    }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }))
+      .catch((e) => ({ status: 0, error: String(e) }))`).catch((e) => ({ status: 0, error: String(e) }));
+  const reply = chat?.body?.choices?.[0]?.message?.content ?? "";
+  const chatOk = chat?.status === 200 && reply.includes(expectedReply);
+
+  const pages = [];
+  for (const page of SMOKE_PAGES) {
+    await run(`location.hash = "#/${page}"`).catch(() => {});
+    await new Promise((r) => setTimeout(r, 1500));
+    const state = await run(`({
+      rendered: (document.getElementById("root")?.innerText ?? "").trim().length,
+      crashed: [...document.querySelectorAll('[role="alert"]')].some((el) => el.textContent?.includes("Dettagli tecnici")),
+      hash: location.hash,
+    })`).catch((e) => ({ rendered: 0, crashed: true, error: String(e) }));
+    pages.push({ page, ok: state.rendered > 0 && !state.crashed, ...state });
+  }
+  const ok = chatOk && pages.every((p) => p.ok);
+  return { ok, chat: { ok: chatOk, status: chat?.status, reply: reply.slice(0, 200), error: chat?.error ?? chat?.body?.error?.message }, pages };
 }
 
 // ── Auto-updater ────────────────────────────────────────────────────────

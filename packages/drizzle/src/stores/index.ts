@@ -31,3 +31,4 @@ export { DrizzleWhatsAppStore } from "./whatsapp-store.js";
 export { DrizzleChatQueueStore } from "./chat-queue-store.js";
 export { DrizzleRoomStore } from "./room-store.js";
 export { DrizzleStorageRegistryStore } from "./storage-registry-store.js";
+export { DrizzleConversationCheckStore } from "./conversation-check-store.js";

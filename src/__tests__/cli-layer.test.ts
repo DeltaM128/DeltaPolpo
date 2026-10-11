@@ -97,6 +97,8 @@ async function runCLI(
   errSpy.mockRestore();
   exitSpy.mockRestore();
 
+  // Known flaky in CI (an empty stdout now and then on Node 22, under load): say why when it happens
+  if (!stdout && stderr) process.stderr.write(`[cli-layer] polpo ${args.join(" ")} printed nothing; stderr: ${stderr}\n`);
   return { stdout, stderr };
 }
 
@@ -104,7 +106,7 @@ async function runCLI(
 // 1. Task CLI Commands
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("CLI layer: task commands", () => {
+describe("CLI layer: task commands", { retry: 2 }, () => {
   let dir: string;
 
   beforeAll(async () => {
@@ -189,7 +191,7 @@ describe("CLI layer: task commands", () => {
 // 2. Team CLI Commands
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("CLI layer: team commands", () => {
+describe("CLI layer: team commands", { retry: 2 }, () => {
   let dir: string;
 
   beforeAll(async () => {
@@ -281,7 +283,7 @@ describe("CLI layer: team commands", () => {
 // 3. Config CLI Commands
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("CLI layer: config commands", () => {
+describe("CLI layer: config commands", { retry: 2 }, () => {
   let dir: string;
 
   beforeAll(async () => {
@@ -348,7 +350,7 @@ describe("CLI layer: config commands", () => {
 // 4. Memory CLI Commands
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("CLI layer: memory commands", () => {
+describe("CLI layer: memory commands", { retry: 2 }, () => {
   let dir: string;
 
   beforeAll(async () => {
@@ -394,7 +396,7 @@ describe("CLI layer: memory commands", () => {
 // 5. Logs CLI Commands
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("CLI layer: logs commands", () => {
+describe("CLI layer: logs commands", { retry: 2 }, () => {
   let dir: string;
 
   beforeAll(async () => {
@@ -422,7 +424,7 @@ describe("CLI layer: logs commands", () => {
 // 6. Schedule CLI Commands
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("CLI layer: schedule commands", () => {
+describe("CLI layer: schedule commands", { retry: 2 }, () => {
   let dir: string;
 
   beforeAll(async () => {

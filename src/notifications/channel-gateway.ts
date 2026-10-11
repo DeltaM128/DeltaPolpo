@@ -39,8 +39,9 @@ import type { SessionStore } from "../core/session-store.js";
 import type { ApprovalCallbackResolver, InboundAttachment } from "./channels/telegram.js";
 import type { InboundGroup } from "./telegram-groups.js";
 import type { GroupIntentArbiter, IntentCandidate } from "./group-intent.js";
-import type { RoomKind, RoomMessage, RoomStore } from "@polpo-ai/core";
-import { transcribeSpeech } from "../tools/audio-tools.js";
+import type { ConversationCheckTarget, RoomKind, RoomMessage, RoomStore, VoiceReplyMode } from "@polpo-ai/core";
+import { synthesizeSpeech, transcribeSpeech } from "../tools/audio-tools.js";
+import { reactionHint, reactionOf } from "./telegram-reactions.js";
 import { loadAgentVaultEntries, resolveAgentVault } from "../vault/index.js";
 import type { TelegramAgentRelay } from "../rooms/telegram-relay.js";
 import type { AgentProfile } from "../rooms/room-engine.js";
@@ -102,6 +103,8 @@ interface InboundMessage {
   group?: InboundGroup;
   /** The message as stored in its room (groups with a room store). */
   roomMessageId?: string;
+  /** The person wrote with a voice message (voice replies in "voice" mode answer with one). */
+  voice?: boolean;
 }
 
 /** A group message that was not addressed to the bot, kept as context for the next turn. */
@@ -133,6 +136,8 @@ export interface GatewayReply {
   files?: ChannelOutboundFile[];
   /** Set when the reply was delivered through another channel (nothing to send here). */
   deliveredTo?: string;
+  /** The reply spoken (voice replies): channels that can send it as a voice message, with the text as caption. */
+  voice?: { data: Buffer; mimeType: string; filename: string };
 }
 
 /** What a reply router delivers to the target channel of a conversation pipe. */
@@ -195,6 +200,8 @@ export interface ChannelChatRequest {
   sessionId: string;
   /** Conversation history including the new user message, oldest first. */
   messages: { role: "user" | "assistant"; content: string | ChannelContentPart[] }[];
+  /** Where this turn came from: a recurring check asked in it reports there. */
+  origin?: ConversationCheckTarget;
 }
 
 /** A file the turn produced for the user (e.g. via open_file), already resolved and checked by the host. */
@@ -229,6 +236,20 @@ const VISION_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gi
 const ATTACHMENT_LABEL: Record<InboundAttachment["kind"], string> = {
   photo: "a photo", document: "a file", voice: "a voice message", audio: "an audio file", video: "a video",
 };
+
+/** What a voice reply says: the text without markdown, code blocks or link targets, within the TTS limit. */
+export function speakableText(text: string): string {
+  const plain = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/[*_~>|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length > 4000 ? `${plain.slice(0, 3990)}…` : plain;
+}
 
 /** Build the user turn: caption (or a short description) plus image/file parts. */
 export function attachmentContent(text: string, attachments: InboundAttachment[]): ChannelContentPart[] {
@@ -338,6 +359,33 @@ export class ChannelGateway {
       }
     }
     return { text: lines.join(" "), transcribed };
+  }
+
+  /**
+   * Voice replies (Telegram): the answering agent's preference (Polpo's settings for Polpo), "off" by
+   * default; "voice" speaks the answer to a voice message, "always" every answer. The text stays as the
+   * caption. Without a text-to-speech provider (OpenAI, ElevenLabs keys or edge-tts) it stays text.
+   */
+  private async withVoice(msg: InboundMessage, conversation: string, reply: string | GatewayReply | undefined): Promise<string | GatewayReply | undefined> {
+    if (msg.channel !== "telegram" || !reply) return reply;
+    const out = typeof reply === "string" ? { text: reply } : reply;
+    // a lone emoji becomes a reaction, not something to say
+    if (!out.text.trim() || out.buttons || out.forceReply || out.deliveredTo || reactionOf(out.text)) return reply;
+    const agent = await this.getActiveAgent(conversation);
+    const mode: VoiceReplyMode = agent
+      ? (await this.orchestrator.getAgents()).find((a) => a.name === agent)?.voiceReplies ?? "off"
+      : this.orchestrator.getConfig()?.settings?.voiceReplies ?? "off";
+    if (mode === "off" || (mode === "voice" && !msg.voice)) return reply;
+    const vault = agent ? resolveAgentVault(await loadAgentVaultEntries(this.orchestrator.getVaultStore(), agent)) : undefined;
+    const speech = await synthesizeSpeech(speakableText(out.text), vault).catch((err: unknown) => {
+      this.log("warn", `voice reply failed, sending text: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
+    if (!speech) {
+      this.log("warn", "voice reply skipped: no text-to-speech provider (OPENAI_API_KEY, ELEVENLABS_API_KEY or edge-tts)");
+      return reply;
+    }
+    return { ...out, voice: { data: speech.data, mimeType: speech.mimeType, filename: speech.filename } };
   }
 
   /** Emit a structured log via the orchestrator's event bus. */
@@ -475,6 +523,20 @@ export class ChannelGateway {
   }
 
   /** Conversation key: the person in a DM; the group, and its topic, in a group. */
+  /**
+   * Where a recurring check asked in this message reports: this bot, this chat and topic, and for a
+   * group its transcript. Only Telegram delivers check reports; elsewhere they stay in the session.
+   */
+  private checkTarget(msg: InboundMessage): ConversationCheckTarget | undefined {
+    if (msg.channel !== "telegram") return undefined;
+    return {
+      channel: this.key,
+      chatId: msg.chatId,
+      ...(msg.group?.threadId !== undefined ? { threadId: msg.group.threadId } : {}),
+      ...(msg.group ? { conversation: this.conversationId(msg, `${msg.channel}:${msg.externalId}`) } : {}),
+    };
+  }
+
   private conversationId(msg: InboundMessage, peerId: string): string {
     if (!msg.group) return peerId;
     return msg.group.threadId !== undefined ? `${this.groupId(msg)}:topic:${msg.group.threadId}` : this.groupId(msg);
@@ -705,13 +767,25 @@ export class ChannelGateway {
   }
 
   /** This bot's reply into the room, answering the person's (or agent's) message. */
+  /** A recurring check's report posted in a group: kept in its transcript, as this bot's agent speaking. */
+  async recordConversationReport(conversation: string, text: string): Promise<void> {
+    if (!this.roomStore || !text.trim()) return;
+    try {
+      const me = await this.speaker(conversation);
+      await this.roomStore.addMessage(conversation, { authorKind: "agent", authorId: me.id, authorName: me.name, text });
+    } catch (err) {
+      this.log("warn", `Room ${conversation}: could not store a check report: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async recordAgentReply(msg: InboundMessage, reply: string | undefined): Promise<RoomMessage | undefined> {
     if (!this.roomStore || !msg.roomMessageId || !reply?.trim()) return undefined;
     const conversation = this.conversationId(msg, `${msg.channel}:${msg.externalId}`);
     try {
       const me = await this.speaker(conversation);
+      const reaction = msg.channel === "telegram" ? reactionOf(reply) : undefined;
       return await this.roomStore.addMessage(conversation, {
-        authorKind: "agent", authorId: me.id, authorName: me.name, text: reply, replyToId: msg.roomMessageId,
+        authorKind: "agent", authorId: me.id, authorName: me.name, text: reaction ? `[reacted ${reaction}]` : reply, replyToId: msg.roomMessageId,
       });
     } catch (err) {
       this.log("warn", `Room ${conversation}: could not store a reply: ${err instanceof Error ? err.message : String(err)}`);
@@ -1326,7 +1400,7 @@ export class ChannelGateway {
   private async handleChat(msg: InboundMessage, conversation: string): Promise<string | GatewayReply | undefined> {
     if (msg.group) msg = { ...msg, text: this.roomStore ? await this.roomTurnText(msg, conversation) : this.groupTurnText(msg, conversation) };
     const target = this.replyTargetFor(msg);
-    if (!target || !this.replyRouter) return this.runChat(msg, conversation);
+    if (!target || !this.replyRouter) return this.withVoice(msg, conversation, await this.runChat(msg, conversation));
     const route = this.replyRouter;
     const deliver = (event: ReplyRouteEvent) => route(target, event).catch(err => {
       this.log("warn", `Reply route to "${target.channel}" failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1402,6 +1476,7 @@ export class ChannelGateway {
         : peer
           ? `\n\n## Caller context\nName: ${peer.displayName ?? "Unknown"}\nChannel: ${peer.channel}\nPeer ID: ${peer.id}`
           : "";
+      const channelContext = msg.channel === "telegram" ? `\n\n## Channel\n${reactionHint()}` : "";
 
       // Resolve model
       const settings = this.orchestrator.getConfig()?.settings;
@@ -1415,7 +1490,7 @@ export class ChannelGateway {
       const compaction = await createSessionCompaction({
         model: m,
         settings: compactionSettings,
-        systemPrompt: () => systemPrompt + peerContext,
+        systemPrompt: () => systemPrompt + peerContext + channelContext,
         tools: () => ALL_ORCHESTRATOR_TOOLS,
         original: piMessages,
         sessionId,
@@ -1440,7 +1515,7 @@ export class ChannelGateway {
         this.log("verbose", `Turn ${turn + 1}: sending ${messages.length} messages`);
         const prepared = await compaction.prepare(messages);
         const piStream = await streamSimpleWithAuth(m, {
-          systemPrompt: systemPrompt + peerContext,
+          systemPrompt: systemPrompt + peerContext + channelContext,
           messages: prepared.messages as Message[],
           tools: ALL_ORCHESTRATOR_TOOLS,
         }, { ...streamOpts, sessionId });
@@ -1499,7 +1574,7 @@ export class ChannelGateway {
 
         for (const call of toolCalls) {
 
-          const result = await executeOrchestratorTool(call.name, call.arguments, this.orchestrator);
+          const result = await executeOrchestratorTool(call.name, call.arguments, this.orchestrator, { sessionId, origin: this.checkTarget(msg) });
           messages.push({
             role: "toolResult",
             toolCallId: call.id,
@@ -1563,7 +1638,7 @@ export class ChannelGateway {
     messages.push({ role: "user", content: attachments.length > 0 ? attachmentContent(msg.text, attachments.slice(0, 5)) : msg.text });
 
     if (this.onTyping) await this.onTyping(msg.chatId, this.sendTarget(msg));
-    const { text, files = [] } = await runner({ agent, sessionId, messages });
+    const { text, files = [] } = await runner({ agent, sessionId, messages, origin: this.checkTarget(msg) });
 
     const body = text.trim();
     const reply = body || (files.length > 0 ? "" : `${who} processed your request but has nothing to say.`);
