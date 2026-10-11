@@ -1,4 +1,5 @@
 import { markdownToTelegramHtml, splitMarkdown } from "../telegram-format.js";
+import { reactionOf } from "../telegram-reactions.js";
 import type { NotificationChannel, Notification, OutcomeAttachment } from "../types.js";
 import type { NotificationChannelConfig } from "../../core/types.js";
 import { basename } from "node:path";
@@ -624,6 +625,11 @@ export class TelegramCallbackPoller {
       }
       const wroteVoice = media.some((ref) => ref.kind === "voice" || ref.kind === "audio");
       const response = await gateway.handleInboundMessage(senderId, chatId, text, senderName, messageId, attachments, group, wroteVoice);
+      // a reply that is a single emoji is a reaction on the message it answers (text if Telegram refuses it)
+      const plain = typeof response === "string" ? response
+        : response && !response.buttons && !response.forceReply && !response.files?.length ? response.text : undefined;
+      const reaction = plain !== undefined ? reactionOf(plain) : undefined;
+      if (reaction && await this.react(chatId, Number(messageId), reaction)) return;
       if (typeof response === "string") await this.sendMarkdown(chatId, response, undefined, undefined, target);
       else if (response) {
         // a voice reply carries the text as caption when it fits; otherwise the text follows as a message
@@ -659,6 +665,23 @@ export class TelegramCallbackPoller {
       return !!data.ok;
     } catch (err) {
       console.warn(`[polpo/telegram] sendVoice failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  /** React to a message with an emoji; false when Telegram refuses it (reactions off in the chat, emoji not allowed). */
+  async react(chatId: string, messageId: number, emoji: string): Promise<boolean> {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.botToken}/setMessageReaction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji }] }),
+      });
+      const data = await res.json() as { ok?: boolean; description?: string };
+      if (!data.ok) console.warn(`[polpo/telegram] reaction ${emoji} refused: ${data.description ?? res.status}`);
+      return !!data.ok;
+    } catch (err) {
+      console.warn(`[polpo/telegram] reaction failed: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }

@@ -442,6 +442,8 @@ function completionResponse(id: string, content: string, promptTokens: number, c
  * the route to run on any runtime (Node.js with full tools, or edge with no tools).
  */
 export interface CompletionRouteDeps {
+  /** What a messaging channel can do, for turns that come from one (internal x-polpo-chat-origin). */
+  channelTurnPrompt?: (origin: ConversationCheckTarget) => string | undefined;
   getAgents: () => Promise<any[]>;
   getConfig: () => any;
   getMemoryStore: () => any;
@@ -792,6 +794,10 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
     if (isFirstTurn) {
       fullSystemPrompt = `${fullSystemPrompt}\n\n## First-turn directive\nThis is the FIRST message of a brand new chat session. After completing your response (or as your final tool call), you MUST call \`set_session_title\` with a SHORT (≤50 chars), meaningful title summarising what the user is asking. Do not over-think it — one line in Title Case. On future turns do NOT call set_session_title unless the user explicitly asks for a rename.`;
     }
+
+    // A turn from a messaging channel: what that channel can do (e.g. emoji reactions on Telegram)
+    const channelPrompt = origin ? deps.channelTurnPrompt?.(origin) : undefined;
+    if (channelPrompt) fullSystemPrompt = `${fullSystemPrompt}\n\n${channelPrompt}`;
 
     // Expose session ID to the client so it can track which session is active
     if (sessionId) {

@@ -65,6 +65,8 @@ describe("ChannelGateway voice replies", () => {
     expect(await gateway("voice")("backend", false, "hi")).toBe("hi");
     expect(await gateway("voice")("backend", true, "hi")).toMatchObject({ text: "hi", voice: { mimeType: "audio/ogg" } });
     expect(await gateway("always")("backend", false, "hi")).toMatchObject({ voice: { filename: "voice.ogg" } });
+    // a lone emoji is a reaction (the poller puts it on the message), never spoken
+    expect(await gateway("always")("backend", true, "👍")).toBe("👍");
     // Polpo uses settings.voiceReplies
     expect(await gateway(undefined, "always")(undefined, false, "hi")).toMatchObject({ voice: expect.anything() });
   });

@@ -41,6 +41,7 @@ import type { InboundGroup } from "./telegram-groups.js";
 import type { GroupIntentArbiter, IntentCandidate } from "./group-intent.js";
 import type { ConversationCheckTarget, RoomKind, RoomMessage, RoomStore, VoiceReplyMode } from "@polpo-ai/core";
 import { synthesizeSpeech, transcribeSpeech } from "../tools/audio-tools.js";
+import { reactionHint, reactionOf } from "./telegram-reactions.js";
 import { loadAgentVaultEntries, resolveAgentVault } from "../vault/index.js";
 import type { TelegramAgentRelay } from "../rooms/telegram-relay.js";
 import type { AgentProfile } from "../rooms/room-engine.js";
@@ -368,7 +369,8 @@ export class ChannelGateway {
   private async withVoice(msg: InboundMessage, conversation: string, reply: string | GatewayReply | undefined): Promise<string | GatewayReply | undefined> {
     if (msg.channel !== "telegram" || !reply) return reply;
     const out = typeof reply === "string" ? { text: reply } : reply;
-    if (!out.text.trim() || out.buttons || out.forceReply || out.deliveredTo) return reply;
+    // a lone emoji becomes a reaction, not something to say
+    if (!out.text.trim() || out.buttons || out.forceReply || out.deliveredTo || reactionOf(out.text)) return reply;
     const agent = await this.getActiveAgent(conversation);
     const mode: VoiceReplyMode = agent
       ? (await this.orchestrator.getAgents()).find((a) => a.name === agent)?.voiceReplies ?? "off"
@@ -781,8 +783,9 @@ export class ChannelGateway {
     const conversation = this.conversationId(msg, `${msg.channel}:${msg.externalId}`);
     try {
       const me = await this.speaker(conversation);
+      const reaction = msg.channel === "telegram" ? reactionOf(reply) : undefined;
       return await this.roomStore.addMessage(conversation, {
-        authorKind: "agent", authorId: me.id, authorName: me.name, text: reply, replyToId: msg.roomMessageId,
+        authorKind: "agent", authorId: me.id, authorName: me.name, text: reaction ? `[reacted ${reaction}]` : reply, replyToId: msg.roomMessageId,
       });
     } catch (err) {
       this.log("warn", `Room ${conversation}: could not store a reply: ${err instanceof Error ? err.message : String(err)}`);
@@ -1473,6 +1476,7 @@ export class ChannelGateway {
         : peer
           ? `\n\n## Caller context\nName: ${peer.displayName ?? "Unknown"}\nChannel: ${peer.channel}\nPeer ID: ${peer.id}`
           : "";
+      const channelContext = msg.channel === "telegram" ? `\n\n## Channel\n${reactionHint()}` : "";
 
       // Resolve model
       const settings = this.orchestrator.getConfig()?.settings;
@@ -1486,7 +1490,7 @@ export class ChannelGateway {
       const compaction = await createSessionCompaction({
         model: m,
         settings: compactionSettings,
-        systemPrompt: () => systemPrompt + peerContext,
+        systemPrompt: () => systemPrompt + peerContext + channelContext,
         tools: () => ALL_ORCHESTRATOR_TOOLS,
         original: piMessages,
         sessionId,
@@ -1511,7 +1515,7 @@ export class ChannelGateway {
         this.log("verbose", `Turn ${turn + 1}: sending ${messages.length} messages`);
         const prepared = await compaction.prepare(messages);
         const piStream = await streamSimpleWithAuth(m, {
-          systemPrompt: systemPrompt + peerContext,
+          systemPrompt: systemPrompt + peerContext + channelContext,
           messages: prepared.messages as Message[],
           tools: ALL_ORCHESTRATOR_TOOLS,
         }, { ...streamOpts, sessionId });
