@@ -121,6 +121,8 @@ jobs:
 
       # The packaged app itself (smoke test mode in ui/electron/main.mjs): window, UI, server
       - name: Open the packaged app
+        # the app gives up after 45 s on its own; this only stops a hung app (no `timeout` on macOS)
+        timeout-minutes: 6
         run: |
           case "$RUNNER_OS" in
             Linux) APP="ui/release/linux-unpacked/ui"; RUN="xvfb-run -a" ;;
@@ -133,7 +135,7 @@ jobs:
           WORK_ARG="$WORK/project"; RESULT_ARG="$RESULT"
           if [[ "$RUNNER_OS" == "Windows" ]]; then WORK_ARG="$(cygpath -w "$WORK_ARG")"; RESULT_ARG="$(cygpath -w "$RESULT")"; fi
           set +e
-          POLPO_SMOKE_TEST="$RESULT_ARG" timeout 240 $RUN "$APP" --no-sandbox "$WORK_ARG" > "$WORK/app.log" 2>&1
+          POLPO_SMOKE_TEST="$RESULT_ARG" $RUN "$APP" --no-sandbox "$WORK_ARG" > "$WORK/app.log" 2>&1
           CODE=$?
           set -e
           tail -40 "$WORK/app.log"
