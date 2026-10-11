@@ -117,7 +117,7 @@ describe("TelegramCallbackPoller — group media", () => {
     const { handle, handler } = poller("token-c");
     const toBot = msg({ message_id: 502, voice, reply_to_message: msg({ message_id: 9, from: { id: 999, is_bot: true, first_name: "Polpo" } }) });
     await handle(toBot);
-    expect(handler.handleInboundMessage).toHaveBeenCalledWith("7", String(GROUP.id), LINE, "Ada", "502", [], { title: "Team", threadId: undefined, addressed: true });
+    expect(handler.handleInboundMessage).toHaveBeenCalledWith("7", String(GROUP.id), LINE, "Ada", "502", [], { title: "Team", threadId: undefined, addressed: true }, true);
   });
 
   it("when the media cannot be downloaded, the context keeps the short label", async () => {

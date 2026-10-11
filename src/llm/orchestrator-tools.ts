@@ -58,6 +58,7 @@ import { STORAGE_ORCHESTRATOR_TOOLS, executeStorageTool } from "../tools/storage
 import { normalizeSandboxSettings, type EffectiveSandbox } from "@polpo-ai/core/sandbox";
 import { loadPolpoConfig, savePolpoConfig } from "../core/config.js";
 import { inkApiUrl, inkRegistry } from "../core/ink-config.js";
+import { VOICE_REPLY_MODES, isVoiceReplyMode } from "../tools/voice-reply-tools.js";
 
 export interface OrchestratorToolProgress {
   message: string;
@@ -1027,6 +1028,38 @@ const resumeCheckpointTool: Tool = {
 };
 
 // ═══════════════════════════════════════════════════════
+//  VOICE REPLIES
+// ═══════════════════════════════════════════════════════
+
+const setVoiceRepliesTool: Tool = {
+  name: "set_voice_replies",
+  description: "Change whether chat replies on Telegram are also sent as voice messages: yours (Polpo's), or an agent's when `agent` is given. "
+    + "Modes: off (text only, the default), voice (answer voice messages with a voice message), always. Use it when someone asks to hear (or stop hearing) the answers.",
+  parameters: Type.Object({
+    mode: Type.Union([Type.Literal("off"), Type.Literal("voice"), Type.Literal("always")], { description: "off, voice or always" }),
+    agent: Type.Optional(Type.String({ description: "An agent's name; omit for Polpo's own replies" })),
+  }),
+};
+
+async function execSetVoiceReplies(polpo: Orchestrator, args: Record<string, unknown>): Promise<string> {
+  const mode = args.mode;
+  if (!isVoiceReplyMode(mode)) return `Error: mode must be one of ${VOICE_REPLY_MODES.join(", ")}`;
+  const agent = typeof args.agent === "string" && args.agent.trim() ? args.agent.trim() : undefined;
+  if (agent) {
+    if (!(await polpo.getAgents()).some((a) => a.name === agent)) return `Error: no agent "${agent}"`;
+    await polpo.updateAgent(agent, { voiceReplies: mode });
+    return `Voice replies of ${agent} set to "${mode}".`;
+  }
+  const polpoDir = polpo.getPolpoDir();
+  const config = loadPolpoConfig(polpoDir);
+  if (!config) return "Error: polpo.json not found";
+  config.settings = { ...(config.settings ?? {}), voiceReplies: mode } as typeof config.settings;
+  savePolpoConfig(polpoDir, config);
+  const reloaded = await polpo.reloadConfig();
+  return reloaded ? `Polpo's voice replies set to "${mode}".` : "Error: saved, but the runtime config reload failed.";
+}
+
+// ═══════════════════════════════════════════════════════
 //  SCHEDULING TOOLS (4)
 // ═══════════════════════════════════════════════════════
 
@@ -1943,6 +1976,8 @@ export const WRITE_TOOLS = new Set([
   "approve_request", "reject_request", "resume_checkpoint",
   // Scheduling
   "create_schedule", "delete_schedule", "update_schedule",
+  // Voice replies
+  "set_voice_replies",
   // Notification rules
   "add_notification_rule", "remove_notification_rule", "send_notification",
   // Task watchers
@@ -2066,6 +2101,8 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
   approveRequestTool, rejectRequestTool, resumeCheckpointTool,
   // Scheduling (3 write + 1 read above)
   createScheduleTool, deleteScheduleTool, updateScheduleTool,
+  // Voice replies
+  setVoiceRepliesTool,
   // Notification rules (2 write + 1 read above + 1 direct send)
   addNotificationRuleTool, removeNotificationRuleTool, sendNotificationTool,
   // Task watchers (2 write + 2 read above)
@@ -2208,6 +2245,7 @@ const TOOL_LABELS: Record<string, string> = {
   create_schedule: "Create Schedule",
   delete_schedule: "Delete Schedule",
   update_schedule: "Update Schedule",
+  set_voice_replies: "Set Voice Replies",
   // Notification rules
   add_notification_rule: "Add Notification Rule",
   remove_notification_rule: "Remove Notification Rule",
@@ -2459,6 +2497,7 @@ export async function executeOrchestratorTool(
       case "list_schedules":       return execListSchedules(polpo, args);
       case "delete_schedule":      return execDeleteSchedule(polpo, args);
       case "update_schedule":      return execUpdateSchedule(polpo, args);
+      case "set_voice_replies":    return execSetVoiceReplies(polpo, args);
 
       // ── Notification Rules ──
       case "add_notification_rule":    return execAddNotificationRule(polpo, args);

@@ -10,6 +10,7 @@ import { buildModelListingForPrompt, resolveModelSpec } from "./pi-client.js";
 import { readSystemContext } from "./orchestrator-tools.js";
 import { detectProviders } from "../setup/providers.js";
 import { inkRegistry } from "../core/ink-config.js";
+import { describeVoiceReplies } from "../tools/voice-reply-tools.js";
 
 /**
  * Describe what tools/capabilities an agent has based on its allowedTools config.
@@ -1856,6 +1857,11 @@ export async function buildChatSystemPrompt(
     buildModelListingForPrompt(),
     ``,
     buildConnectedProviderGuidance(resolveModelSpec(config?.settings?.orchestratorModel), agents),
+    ``,
+    `## Voice replies`,
+    ``,
+    describeVoiceReplies(config?.settings?.voiceReplies),
+    `Agents have their own setting (voiceReplies), which they or you change with set_voice_replies.`,
   );
 
   // ── Skill creation guidance ──

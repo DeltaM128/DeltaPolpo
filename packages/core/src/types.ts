@@ -314,6 +314,12 @@ export interface Pipeline {
 
 // === Agent ===
 
+/**
+ * When chat replies are also sent as a voice message (Telegram): never ("off", the default), when the
+ * person wrote with a voice message ("voice"), or always ("always"). The text is kept as the caption.
+ */
+export type VoiceReplyMode = "off" | "voice" | "always";
+
 export interface AgentConfig {
   name: string;
   /** ISO timestamp of when this agent was created / added to the team. Auto-set by addAgent(). */
@@ -351,6 +357,8 @@ export interface AgentConfig {
   reasoning?: ReasoningLevel;
   /** Context compaction for this agent's runs and chats (overrides `settings.compaction`). */
   compaction?: import("./context-compactor.js").CompactionSettings;
+  /** Voice replies in chats (Telegram); default "off". The agent can change it (set_voice_replies). */
+  voiceReplies?: VoiceReplyMode;
   /** Where this agent's tools run (sandbox), set by a person: overrides the instance default. */
   sandbox?: import("./sandbox.js").SandboxSettings;
   /** Runtime profile used by deterministic loop execution. */
@@ -856,6 +864,8 @@ export interface PolpoSettings {
   /** Model for orchestrator LLM calls (question detection, deadlock, missions).
    *  Can be a simple string ("anthropic:claude-opus-4-6") or a ModelConfig with fallbacks. */
   orchestratorModel?: string | ModelConfig;
+  /** Polpo's voice replies in chats (Telegram); default "off". Polpo can change it (set_voice_replies). */
+  voiceReplies?: VoiceReplyMode;
   /** Image-capable model for tasks that need vision (falls back to orchestratorModel). */
   imageModel?: string;
   /** Model allowlist — when set, only these models can be used.

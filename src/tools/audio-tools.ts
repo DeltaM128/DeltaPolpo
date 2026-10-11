@@ -416,11 +416,34 @@ async function speakOpenAI(
   };
   const responseFormat = formatMap[ext] ?? "mp3";
 
+  const buffer = await openAISpeech(params.text, apiKey, { ...params, model, voice, format: responseFormat }, signal);
+  await writeBytes(fs, filePath, buffer);
+
+  return {
+    content: [{ type: "text", text: `Speech audio saved: ${filePath} (${(buffer.byteLength / 1024).toFixed(1)} KB, ${responseFormat}, voice: ${voice}, model: ${model})` }],
+    details: {
+      provider: "openai",
+      model,
+      voice,
+      format: responseFormat,
+      path: filePath,
+      bytes: buffer.byteLength,
+      textLength: params.text.length,
+    },
+  };
+}
+
+async function openAISpeech(
+  text: string,
+  apiKey: string,
+  params: { model: string; voice: string; format: string; speed?: number; instructions?: string },
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const body: Record<string, unknown> = {
-    model,
-    input: params.text,
-    voice,
-    response_format: responseFormat,
+    model: params.model,
+    input: text,
+    voice: params.voice,
+    response_format: params.format,
   };
   if (params.speed !== undefined) body.speed = params.speed;
   if (params.instructions) body.instructions = params.instructions;
@@ -446,21 +469,7 @@ async function speakOpenAI(
     throw new Error(`OpenAI TTS API ${response.status}: ${errText}`);
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  await writeBytes(fs, filePath, buffer);
-
-  return {
-    content: [{ type: "text", text: `Speech audio saved: ${filePath} (${(buffer.byteLength / 1024).toFixed(1)} KB, ${responseFormat}, voice: ${voice}, model: ${model})` }],
-    details: {
-      provider: "openai",
-      model,
-      voice,
-      format: responseFormat,
-      path: filePath,
-      bytes: buffer.byteLength,
-      textLength: params.text.length,
-    },
-  };
+  return Buffer.from(await response.arrayBuffer());
 }
 
 async function speakDeepgram(
@@ -530,35 +539,7 @@ async function speakElevenLabs(
     mp3: "mp3_44100_128", wav: "pcm_44100", flac: "flac",
   };
   const outputFormat = formatMap[ext] ?? "mp3_44100_128";
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
-  if (signal) signal.addEventListener("abort", () => controller.abort(), { once: true });
-
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=${outputFormat}`,
-    {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: params.text,
-        model_id: model,
-      }),
-      signal: controller.signal,
-    },
-  );
-
-  clearTimeout(timer);
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`ElevenLabs API ${response.status}: ${errText}`);
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await elevenLabsSpeech(params.text, apiKey, { model, voiceId, outputFormat }, signal);
   await writeBytes(fs, filePath, buffer);
 
   return {
@@ -573,6 +554,42 @@ async function speakElevenLabs(
       textLength: params.text.length,
     },
   };
+}
+
+async function elevenLabsSpeech(
+  text: string,
+  apiKey: string,
+  params: { model: string; voiceId: string; outputFormat: string },
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
+  if (signal) signal.addEventListener("abort", () => controller.abort(), { once: true });
+
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${params.voiceId}?output_format=${params.outputFormat}`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text,
+        model_id: params.model,
+      }),
+      signal: controller.signal,
+    },
+  );
+
+  clearTimeout(timer);
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`ElevenLabs API ${response.status}: ${errText}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
 }
 
 // ─── Edge TTS (free, local CLI, automatic fallback) ───
@@ -682,12 +699,30 @@ async function speakEdgeTts(
 
   const voice = resolveEdgeVoice(params.voice, params.language, params.gender);
 
-  // edge-tts writes to a path on this machine: a private temporary file, then the bytes go
-  // through the tools' FileSystem (the agent's files may live in a remote sandbox).
-  const bytes = await withHostTempDir(async (dir) => {
-    const hostPath = join(dir, `speech${extname(filePath) || ".mp3"}`);
+  // edge-tts writes to a path on this machine, then the bytes go through the tools' FileSystem
+  // (the agent's files may live in a remote sandbox).
+  const data = await edgeTtsSpeech(bin, params.text, voice, extname(filePath) || ".mp3", signal);
+  await writeBytes(fs, filePath, data);
+  const bytes = data.byteLength;
+
+  return {
+    content: [{ type: "text", text: `Speech audio saved: ${filePath} (${(bytes / 1024).toFixed(1)} KB, voice: ${voice}, provider: edge-tts)` }],
+    details: {
+      provider: "edge",
+      voice,
+      path: filePath,
+      bytes,
+      textLength: params.text.length,
+    },
+  };
+}
+
+/** edge-tts into a private temporary file on this machine; returns the bytes. */
+async function edgeTtsSpeech(bin: string, text: string, voice: string, ext: string, signal?: AbortSignal): Promise<Buffer> {
+  return withHostTempDir(async (dir) => {
+    const hostPath = join(dir, `speech${ext}`);
     const args = [
-      "--text", params.text,
+      "--text", text,
       "--voice", voice,
       "--write-media", hostPath,
     ];
@@ -700,21 +735,35 @@ async function speakEdgeTts(
         signal.addEventListener("abort", () => child.kill(), { once: true });
       }
     });
-    const data = await readFile(hostPath);
-    await writeBytes(fs, filePath, data);
-    return data.byteLength;
+    return readFile(hostPath);
   });
+}
 
-  return {
-    content: [{ type: "text", text: `Speech audio saved: ${filePath} (${(bytes / 1024).toFixed(1)} KB, voice: ${voice}, provider: edge-tts)` }],
-    details: {
-      provider: "edge",
-      voice,
-      path: filePath,
-      bytes,
-      textLength: params.text.length,
-    },
-  };
+/**
+ * Text to speech outside the tool (voice replies in chats): OpenAI (Ogg/Opus, what Telegram voice
+ * messages use), else ElevenLabs, else the free edge-tts when installed (MP3); null when none works.
+ */
+export async function synthesizeSpeech(
+  text: string,
+  vault?: ResolvedVault,
+  signal?: AbortSignal,
+): Promise<{ data: Buffer; mimeType: string; filename: string; provider: string } | null> {
+  const openai = vault?.getKey("openai", "key") ?? process.env.OPENAI_API_KEY;
+  if (openai) {
+    const data = await openAISpeech(text, openai, { model: "tts-1", voice: "alloy", format: "opus" }, signal);
+    return { data, mimeType: "audio/ogg", filename: "voice.ogg", provider: "openai" };
+  }
+  const elevenlabs = vault?.getKey("elevenlabs", "key") ?? process.env.ELEVENLABS_API_KEY;
+  if (elevenlabs) {
+    const data = await elevenLabsSpeech(text, elevenlabs, { model: "eleven_multilingual_v2", voiceId: "21m00Tcm4TlvDq8ikWAM", outputFormat: "mp3_44100_128" }, signal);
+    return { data, mimeType: "audio/mpeg", filename: "voice.mp3", provider: "elevenlabs" };
+  }
+  const edge = resolveEdgeTtsBin();
+  if (edge) {
+    const data = await edgeTtsSpeech(edge, text, resolveEdgeVoice(), ".mp3", signal);
+    return { data, mimeType: "audio/mpeg", filename: "voice.mp3", provider: "edge" };
+  }
+  return null;
 }
 
 // ─── Factory ───

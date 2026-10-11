@@ -430,6 +430,13 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       if (!existingToolNames.has("ask_user")) {
         tools.push(askUserTool);
       }
+      // Voice replies on Telegram: off by default, the agent knows its mode and changes it when asked
+      if (!existingToolNames.has("set_voice_replies")) {
+        const { createVoiceReplyTool } = await import("../tools/voice-reply-tools.js");
+        tools.push(createVoiceReplyTool(agentConfig.voiceReplies, async (mode) => {
+          await o.updateAgent(agentConfig.name, { voiceReplies: mode });
+        }));
+      }
       // Opt-in `render_widget` per agente, via allowedTools (es.
       // `["read","write","render_widget"]` in polpo.json). NON è nei
       // CLIENT_SIDE_CHAT_TOOLS perché è un display tool potente: lo
