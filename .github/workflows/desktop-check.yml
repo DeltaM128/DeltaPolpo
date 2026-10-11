@@ -2,8 +2,10 @@ name: Desktop Check
 
 # Packages the desktop app on each OS (as the release does, without publishing), starts the bundled
 # server the way the app starts it (from another folder, with NODE_PATH on the shipped node_modules;
-# on Linux also in a clean container without Node), then opens the packaged app itself: its window
-# must load the UI from file:// and the UI must reach the server.
+# on Linux also in a clean container without Node), then opens the packaged app and uses it
+# (.github/scripts/desktop-smoke.sh): the window loads the UI from file://, a chat with Polpo gets
+# the reply of a mock model, the main pages render. On Windows the same with the installer: built,
+# installed silently, and the installed app opened and used.
 on:
   pull_request:
     branches: [main, develop]
@@ -15,6 +17,9 @@ on:
       - 'ui/index.html'
       - 'src/cli/**'
       - 'src/core/version.ts'
+      - 'src/server/**'
+      - 'packages/server/src/**'
+      - '.github/scripts/**'
       - 'packages/server/src/routes/health.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -119,10 +124,11 @@ jobs:
           echo "health: $BODY"
           echo "$BODY" | grep -q "\"version\":\"$EXPECTED\"" || { echo "expected version $EXPECTED"; exit 1; }
 
-      # The packaged app itself (smoke test mode in ui/electron/main.mjs): window, UI, server
-      - name: Open the packaged app
+      # The packaged app itself (smoke test mode in ui/electron/main.mjs), used: the window loads the UI,
+      # a chat with Polpo gets the reply of a mock model, the main pages render
+      - name: Open and use the packaged app
         # the app gives up after 45 s on its own; this only stops a hung app (no `timeout` on macOS)
-        timeout-minutes: 6
+        timeout-minutes: 8
         run: |
           case "$RUNNER_OS" in
             Linux) APP="ui/release/linux-unpacked/ui"; RUN="xvfb-run -a" ;;
@@ -130,15 +136,31 @@ jobs:
             macOS) APP="$(ls -d ui/release/mac*/Polpo.app | head -1)/Contents/MacOS/Polpo"; RUN="" ;;
           esac
           APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
-          WORK="$(mktemp -d)"
-          RESULT="$WORK/smoke.json"
-          WORK_ARG="$WORK/project"; RESULT_ARG="$RESULT"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then WORK_ARG="$(cygpath -w "$WORK_ARG")"; RESULT_ARG="$(cygpath -w "$RESULT")"; fi
-          set +e
-          POLPO_SMOKE_TEST="$RESULT_ARG" $RUN "$APP" --no-sandbox "$WORK_ARG" > "$WORK/app.log" 2>&1
-          CODE=$?
-          set -e
-          tail -40 "$WORK/app.log"
-          echo "--- smoke test result (exit $CODE)"
-          cat "$RESULT" 2>/dev/null || { echo "no result: the app did not finish the smoke test"; exit 1; }
-          node -e "process.exit(require(process.argv[1]).ok ? 0 : 1)" "$RESULT"
+          bash .github/scripts/desktop-smoke.sh "$APP" "$RUN"
+
+      # Windows as users get it: the installer, installed for the user, then the installed app used
+      - name: Build the Windows installer
+        if: matrix.platform == 'win'
+        run: pnpm exec electron-builder --win nsis --publish never
+        working-directory: ui
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Install it
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem ui/release -Filter "Polpo*Setup*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "installer not found in ui/release" }
+          Write-Host "Installing $($setup.Name)"
+          Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
+          $installed = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Polpo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $installed) { throw "Polpo.exe not found after installing" }
+          Write-Host "Installed at $($installed.FullName)"
+          Get-ChildItem (Join-Path $installed.DirectoryName "resources") | Select-Object Name
+          "POLPO_INSTALLED=$($installed.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Open and use the installed app
+        if: matrix.platform == 'win'
+        timeout-minutes: 8
+        run: bash .github/scripts/desktop-smoke.sh "$(cygpath -u "$POLPO_INSTALLED")"
