@@ -1,4 +1,5 @@
 import { markdownToTelegramHtml, splitMarkdown } from "../telegram-format.js";
+import { reactionOf } from "../telegram-reactions.js";
 import type { NotificationChannel, Notification, OutcomeAttachment } from "../types.js";
 import type { NotificationChannelConfig } from "../../core/types.js";
 import { basename } from "node:path";
@@ -622,16 +623,66 @@ export class TelegramCallbackPoller {
         await this.sendReply(chatId, escapeHtml(skipped[0] ?? "Could not download the attachment."), undefined, undefined, true, target);
         return;
       }
-      const response = await gateway.handleInboundMessage(senderId, chatId, text, senderName, messageId, attachments, group);
+      const wroteVoice = media.some((ref) => ref.kind === "voice" || ref.kind === "audio");
+      const response = await gateway.handleInboundMessage(senderId, chatId, text, senderName, messageId, attachments, group, wroteVoice);
+      // a reply that is a single emoji is a reaction on the message it answers (text if Telegram refuses it)
+      const plain = typeof response === "string" ? response
+        : response && !response.buttons && !response.forceReply && !response.files?.length ? response.text : undefined;
+      const reaction = plain !== undefined ? reactionOf(plain) : undefined;
+      if (reaction && await this.react(chatId, Number(messageId), reaction)) return;
       if (typeof response === "string") await this.sendMarkdown(chatId, response, undefined, undefined, target);
       else if (response) {
-        if (response.text.trim() || response.buttons || response.forceReply) {
+        // a voice reply carries the text as caption when it fits; otherwise the text follows as a message
+        const caption = response.voice ? markdownToTelegramHtml(response.text) : "";
+        const fits = caption.length <= TELEGRAM_CAPTION_LIMIT;
+        const voiceSent = !!response.voice && await this.sendVoice(chatId, response.voice, fits ? caption : undefined, target);
+        const captioned = voiceSent && fits;
+        if (!captioned && (response.text.trim() || response.buttons || response.forceReply)) {
           await this.sendMarkdown(chatId, response.text, response.buttons, response.forceReply, target);
         }
         for (const file of response.files ?? []) await this.sendDocument(chatId, file.path, file.filename, target);
       }
     } finally {
       clearInterval(typingInterval);
+    }
+  }
+
+  /** A voice message (Ogg/Opus, MP3 or M4A), with an HTML caption; false when Telegram refuses it. */
+  async sendVoice(chatId: string, voice: { data: Buffer; mimeType: string; filename: string }, captionHtml?: string, target?: TelegramSendTarget): Promise<boolean> {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    form.append("voice", new Blob([new Uint8Array(voice.data)], { type: voice.mimeType }), voice.filename);
+    if (captionHtml) {
+      form.append("caption", captionHtml);
+      form.append("parse_mode", "HTML");
+    }
+    if (target?.threadId !== undefined) form.append("message_thread_id", String(target.threadId));
+    if (target?.replyTo !== undefined) form.append("reply_parameters", JSON.stringify({ message_id: target.replyTo, allow_sending_without_reply: true }));
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.botToken}/sendVoice`, { method: "POST", body: form });
+      const data = await res.json() as { ok?: boolean; description?: string };
+      if (!data.ok) console.warn(`[polpo/telegram] sendVoice refused: ${data.description ?? res.status}`);
+      return !!data.ok;
+    } catch (err) {
+      console.warn(`[polpo/telegram] sendVoice failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  /** React to a message with an emoji; false when Telegram refuses it (reactions off in the chat, emoji not allowed). */
+  async react(chatId: string, messageId: number, emoji: string): Promise<boolean> {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.botToken}/setMessageReaction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji }] }),
+      });
+      const data = await res.json() as { ok?: boolean; description?: string };
+      if (!data.ok) console.warn(`[polpo/telegram] reaction ${emoji} refused: ${data.description ?? res.status}`);
+      return !!data.ok;
+    } catch (err) {
+      console.warn(`[polpo/telegram] reaction failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
     }
   }
 
@@ -805,6 +856,8 @@ export interface TelegramGatewayHandler {
     attachments?: InboundAttachment[],
     /** Set for group messages; unaddressed ones are context only. */
     group?: InboundGroup,
+    /** The person wrote with a voice message. */
+    voice?: boolean,
   ): Promise<string | TelegramReply | undefined>;
 
   /**
@@ -959,7 +1012,12 @@ export interface TelegramReply {
   forceReply?: { placeholder?: string };
   /** Local files sent as documents after the text. */
   files?: { path: string; filename: string }[];
+  /** The reply spoken: sent as a voice message, the text as its caption. */
+  voice?: { data: Buffer; mimeType: string; filename: string };
 }
+
+/** Bot API limit for media captions (characters). */
+const TELEGRAM_CAPTION_LIMIT = 1024;
 
 /** Bot API sendDocument upload limit. */
 const TELEGRAM_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;

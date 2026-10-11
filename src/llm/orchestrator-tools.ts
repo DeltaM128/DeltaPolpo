@@ -58,6 +58,11 @@ import { STORAGE_ORCHESTRATOR_TOOLS, executeStorageTool } from "../tools/storage
 import { normalizeSandboxSettings, type EffectiveSandbox } from "@polpo-ai/core/sandbox";
 import { loadPolpoConfig, savePolpoConfig } from "../core/config.js";
 import { inkApiUrl, inkRegistry } from "../core/ink-config.js";
+import { VOICE_REPLY_MODES, isVoiceReplyMode } from "../tools/voice-reply-tools.js";
+import {
+  CANCEL_CHECK_DESCRIPTION, CancelCheckSchema, LIST_CHECKS_DESCRIPTION, ListChecksSchema, SCHEDULE_CHECK_DESCRIPTION, ScheduleCheckSchema,
+  execCancelCheck, execListChecks, execScheduleCheck,
+} from "../tools/conversation-check-tools.js";
 
 export interface OrchestratorToolProgress {
   message: string;
@@ -72,6 +77,8 @@ export interface OrchestratorToolExecutionContext {
   turnId?: string;
   toolCallId?: string;
   sessionId?: string;
+  /** Where the turn came from (a Telegram chat or topic): recurring checks report there. */
+  origin?: import("@polpo-ai/core").ConversationCheckTarget;
 }
 
 
@@ -1027,6 +1034,46 @@ const resumeCheckpointTool: Tool = {
 };
 
 // ═══════════════════════════════════════════════════════
+//  VOICE REPLIES
+// ═══════════════════════════════════════════════════════
+
+const setVoiceRepliesTool: Tool = {
+  name: "set_voice_replies",
+  description: "Change whether chat replies on Telegram are also sent as voice messages: yours (Polpo's), or an agent's when `agent` is given. "
+    + "Modes: off (text only, the default), voice (answer voice messages with a voice message), always. Use it when someone asks to hear (or stop hearing) the answers.",
+  parameters: Type.Object({
+    mode: Type.Union([Type.Literal("off"), Type.Literal("voice"), Type.Literal("always")], { description: "off, voice or always" }),
+    agent: Type.Optional(Type.String({ description: "An agent's name; omit for Polpo's own replies" })),
+  }),
+};
+
+async function execSetVoiceReplies(polpo: Orchestrator, args: Record<string, unknown>): Promise<string> {
+  const mode = args.mode;
+  if (!isVoiceReplyMode(mode)) return `Error: mode must be one of ${VOICE_REPLY_MODES.join(", ")}`;
+  const agent = typeof args.agent === "string" && args.agent.trim() ? args.agent.trim() : undefined;
+  if (agent) {
+    if (!(await polpo.getAgents()).some((a) => a.name === agent)) return `Error: no agent "${agent}"`;
+    await polpo.updateAgent(agent, { voiceReplies: mode });
+    return `Voice replies of ${agent} set to "${mode}".`;
+  }
+  const polpoDir = polpo.getPolpoDir();
+  const config = loadPolpoConfig(polpoDir);
+  if (!config) return "Error: polpo.json not found";
+  config.settings = { ...(config.settings ?? {}), voiceReplies: mode } as typeof config.settings;
+  savePolpoConfig(polpoDir, config);
+  const reloaded = await polpo.reloadConfig();
+  return reloaded ? `Polpo's voice replies set to "${mode}".` : "Error: saved, but the runtime config reload failed.";
+}
+
+// ═══════════════════════════════════════════════════════
+//  CONVERSATION CHECKS (3): recurring checks reported in the chat they were asked in
+// ═══════════════════════════════════════════════════════
+
+const scheduleCheckTool: Tool = { name: "schedule_check", description: SCHEDULE_CHECK_DESCRIPTION, parameters: ScheduleCheckSchema };
+const listChecksTool: Tool = { name: "list_checks", description: LIST_CHECKS_DESCRIPTION, parameters: ListChecksSchema };
+const cancelCheckTool: Tool = { name: "cancel_check", description: CANCEL_CHECK_DESCRIPTION, parameters: CancelCheckSchema };
+
+// ═══════════════════════════════════════════════════════
 //  MODEL CATALOG
 // ═══════════════════════════════════════════════════════
 
@@ -1961,7 +2008,7 @@ export const READ_TOOLS = new Set([
   "list_agents", "get_team", "get_memory", "get_config",
   "list_approvals", "list_checkpoints", "list_delays", "get_logs",
   // Read-only listing tools
-  "list_schedules", "list_models", "list_notification_rules", "list_watchers", "wait_for_task",
+  "list_schedules", "list_checks", "list_models", "list_notification_rules", "list_watchers", "wait_for_task",
   // Skills (read-only)
   "list_orchestrator_skills", "list_agent_skills", "search_skills", "get_skill",
   // Playbooks (read-only)
@@ -1996,6 +2043,10 @@ export const WRITE_TOOLS = new Set([
   "approve_request", "reject_request", "resume_checkpoint",
   // Scheduling
   "create_schedule", "delete_schedule", "update_schedule",
+  // Voice replies
+  "set_voice_replies",
+  // Conversation checks
+  "schedule_check", "cancel_check",
   // Notification rules
   "add_notification_rule", "remove_notification_rule", "send_notification",
   // Task watchers
@@ -2119,6 +2170,10 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
   approveRequestTool, rejectRequestTool, resumeCheckpointTool,
   // Scheduling (3 write + 1 read above)
   createScheduleTool, deleteScheduleTool, updateScheduleTool,
+  // Voice replies
+  setVoiceRepliesTool,
+  // Conversation checks
+  scheduleCheckTool, listChecksTool, cancelCheckTool,
   // Model catalog
   listModelsTool,
   // Notification rules (2 write + 1 read above + 1 direct send)
@@ -2263,6 +2318,10 @@ const TOOL_LABELS: Record<string, string> = {
   create_schedule: "Create Schedule",
   delete_schedule: "Delete Schedule",
   update_schedule: "Update Schedule",
+  set_voice_replies: "Set Voice Replies",
+  schedule_check: "Schedule Check",
+  list_checks: "List Checks",
+  cancel_check: "Cancel Check",
   list_models: "List Models",
   // Notification rules
   add_notification_rule: "Add Notification Rule",
@@ -2515,7 +2574,13 @@ export async function executeOrchestratorTool(
       case "list_schedules":       return execListSchedules(polpo, args);
       case "delete_schedule":      return execDeleteSchedule(polpo, args);
       case "update_schedule":      return execUpdateSchedule(polpo, args);
+      case "set_voice_replies":    return execSetVoiceReplies(polpo, args);
       case "list_models":          return execListModels(args);
+
+      // ── Conversation checks (this chat) ──
+      case "schedule_check": return execScheduleCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId, origin: context.origin });
+      case "list_checks":    return execListChecks({ manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
+      case "cancel_check":   return execCancelCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
 
       // ── Notification Rules ──
       case "add_notification_rule":    return execAddNotificationRule(polpo, args);

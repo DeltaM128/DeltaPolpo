@@ -189,6 +189,13 @@ describe("ChannelGateway — groups", () => {
     expect(runner).toHaveBeenCalledTimes(1);
   });
 
+  it("tells the runner where the turn came from: a recurring check asked there reports to that topic", async () => {
+    const { say, lastTurn, peerStore } = setup();
+    peerStore.allowlist.add(GROUP_ID);
+    await say(ADA, "check the site every 2 minutes", { threadId: 4 });
+    expect(lastTurn().origin).toEqual({ channel: "default", chatId: String(GROUP.id), threadId: 4, conversation: `${GROUP_ID}:topic:4` });
+  });
+
   it("unaddressed messages become context for the next turn, once", async () => {
     const { say, lastTurn, peerStore } = setup();
     peerStore.allowlist.add(GROUP_ID);
@@ -333,7 +340,7 @@ describe("TelegramCallbackPoller — groups", () => {
   it("answers a mention in its topic, quoting the question", async () => {
     const { handle, handler, sent } = poller();
     await handle(msg({ message_id: 42, message_thread_id: 3, is_topic_message: true, text: "@polpo_test_bot status?", entities: [{ type: "mention", offset: 0, length: 15 }] }));
-    expect(handler.handleInboundMessage).toHaveBeenCalledWith("7", String(GROUP.id), "status?", "Ada", "42", [], { title: "Team", threadId: 3, addressed: true });
+    expect(handler.handleInboundMessage).toHaveBeenCalledWith("7", String(GROUP.id), "status?", "Ada", "42", [], { title: "Team", threadId: 3, addressed: true }, false);
     const reply = sent.find(s => s.method === "sendMessage")!;
     expect(reply.body).toMatchObject({ chat_id: String(GROUP.id), message_thread_id: 3, reply_parameters: { message_id: 42, allow_sending_without_reply: true } });
     expect(sent.find(s => s.method === "sendChatAction")!.body).toMatchObject({ message_thread_id: 3 });

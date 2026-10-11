@@ -21,6 +21,7 @@ export class TelegramGatewayAdapter implements TelegramGatewayHandler {
     messageId?: string,
     attachments?: InboundAttachment[],
     group?: InboundGroup,
+    voice?: boolean,
   ): Promise<TelegramReply | undefined> {
     return this.gateway.handleMessageReply({
       channel: "telegram",
@@ -31,6 +32,7 @@ export class TelegramGatewayAdapter implements TelegramGatewayHandler {
       messageId,
       attachments,
       group,
+      ...(voice ? { voice } : {}),
     });
   }
 
