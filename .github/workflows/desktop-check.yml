@@ -163,6 +163,14 @@ jobs:
           Write-Host "Installing $($setup.Name)"
           $proc = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
           Write-Host "Installer exit code: $($proc.ExitCode)"
+          if ($proc.ExitCode -ne 0) {
+            # say why (the faulting module of a crash), then try once more: is it constant or random?
+            Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProviderName -in "Application Error", "Windows Error Reporting", ".NET Runtime" } |
+              Select-Object -First 6 | Format-List TimeCreated, ProviderName, Message
+            $proc = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
+            Write-Host "Installer exit code (second try): $($proc.ExitCode)"
+          }
           # the NSIS installer may hand over to a copy of itself and return early: wait for the app
           $installed = $null
           for ($i = 0; $i -lt 120 -and -not $installed; $i++) {
