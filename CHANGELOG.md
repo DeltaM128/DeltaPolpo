@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - What is left says what happened and where to look, and logs a warning
 
 ### Changed
-- CI: Desktop Check waits for the Windows installer to finish before using the installed app; the real-jail network tests have 30 s; the CLI layer tests retry (known flaky, now logging why) (#115, #120)
+- CI: Desktop Check closes the app and waits for the Windows installer to finish before using the installed app; the real-jail network tests have 30 s; the CLI layer tests retry (known flaky, now logging why) (#115, #120)
 
 ## [0.4.4] — 2026-10-11 — Checks, Voice, Reactions
 

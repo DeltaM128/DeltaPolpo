@@ -156,8 +156,13 @@ jobs:
         run: |
           $setup = Get-ChildItem ui/release -Filter "Polpo*Setup*.exe" | Select-Object -First 1
           if (-not $setup) { throw "installer not found in ui/release" }
+          # a silent NSIS install aborts when the app is running: the packaged app used above may
+          # still have Polpo.exe processes (Electron children) or its server alive
+          foreach ($name in "Polpo", "polpo-server") { Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force }
+          for ($i = 0; $i -lt 30 -and (Get-Process -Name "Polpo", "polpo-server" -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
           Write-Host "Installing $($setup.Name)"
-          Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
+          $proc = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
+          Write-Host "Installer exit code: $($proc.ExitCode)"
           # the NSIS installer may hand over to a copy of itself and return early: wait for the app
           $installed = $null
           for ($i = 0; $i -lt 120 -and -not $installed; $i++) {
