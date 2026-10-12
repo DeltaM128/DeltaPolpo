@@ -158,8 +158,16 @@ jobs:
           if (-not $setup) { throw "installer not found in ui/release" }
           Write-Host "Installing $($setup.Name)"
           Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
-          $installed = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Polpo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $installed) { throw "Polpo.exe not found after installing" }
+          # the NSIS installer may hand over to a copy of itself and return early: wait for the app
+          $installed = $null
+          for ($i = 0; $i -lt 120 -and -not $installed; $i++) {
+            $installed = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Polpo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $installed) { Start-Sleep -Seconds 1 }
+          }
+          if (-not $installed) { throw "Polpo.exe not found 2 minutes after installing" }
+          # and for the installer to finish writing it (resources next to the exe)
+          for ($i = 0; $i -lt 60 -and -not (Test-Path (Join-Path $installed.DirectoryName "resources\polpo-server.exe")); $i++) { Start-Sleep -Seconds 1 }
+          Get-Process | Where-Object { $_.Path -like "*Polpo*Setup*" } | Wait-Process -Timeout 120 -ErrorAction SilentlyContinue
           Write-Host "Installed at $($installed.FullName)"
           Get-ChildItem (Join-Path $installed.DirectoryName "resources") | Select-Object Name
           "POLPO_INSTALLED=$($installed.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

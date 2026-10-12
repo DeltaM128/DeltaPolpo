@@ -27,6 +27,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-12-no-empty-replies",
+    date: "2026-10-12",
+    kind: "fixed",
+    title: "Basta \"nothing to say\" su Telegram",
+    summary: "Quando un agente usava degli strumenti e poi chiudeva senza scrivere, arrivava \"…has nothing to say\". Ora gli viene chiesto di rispondere.",
+    body: [
+      "Succedeva soprattutto dopo che l'agente (o Polpo) aveva usato degli strumenti: il modello chiudeva il turno **senza scrivere niente**, e su Telegram arrivava \"…processed your request but has nothing to say\".",
+      "",
+      "- Ora, se un turno finisce **senza risposta**, Polpo chiede al modello di scriverla subito: cosa ha fatto, cosa ha trovato o cosa gli serve.",
+      "- Se l'agente arriva al **limite di passaggi**, invece di fermarsi in silenzio riassume cosa ha fatto e cosa resta da fare. Su Telegram Polpo ora ha più passaggi a disposizione (da 15 a 40).",
+      "- Nel raro caso in cui resti comunque vuoto, il messaggio spiega cosa è successo e dove guardare.",
+    ].join("\n"),
+  },
+  {
     id: "2026-10-12-agent-learning",
     date: "2026-10-12",
     kind: "new",
