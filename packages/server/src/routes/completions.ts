@@ -34,6 +34,16 @@ import type { ConversationCheckTarget } from "@polpo-ai/core/conversation-checks
 
 const DEFAULT_MAX_TURNS = 200;
 
+/**
+ * Asked once when a turn ends without a word (often right after tool calls): a channel would have
+ * nothing to send ("… has nothing to say").
+ */
+export const EMPTY_REPLY_NUDGE = "[Your turn ended without a reply. Write it now: what you did, what you found, or what you need "
+  + "from the person. It is the message they will see.]";
+/** Asked when a turn reaches its step limit: one last answer, without tools, instead of silence. */
+export const STEP_LIMIT_NUDGE = "[You reached the limit of steps for this turn. Without using tools, tell the person what you did, "
+  + "what you found, and what is left to do.]";
+
 type MessageSegment =
   | { type: "text"; content: string }
   | { type: "thinking"; content: string }
@@ -1492,6 +1502,8 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
       const segmentsAccum: MessageSegment[] = [];
       let overflowRetries = 0;
       let turnOutcome: TurnOutcome = "error";
+      let nudgedEmpty = false;
+      let finished = false;
 
       try {
         for (let turn = 0; turn < maxTurns; turn++) {
@@ -1540,7 +1552,16 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
             ensureToolSegment(segmentsAccum, call.id);
           }
 
-          if (toolCalls.length === 0) break;
+          if (toolCalls.length === 0) {
+            // ended without a word (often right after tools): ask once for the answer
+            if (!finalText.trim() && !nudgedEmpty && turn + 1 < maxTurns) {
+              nudgedEmpty = true;
+              messages.push({ role: "user", content: EMPTY_REPLY_NUDGE, timestamp: Date.now() });
+              continue;
+            }
+            finished = true;
+            break;
+          }
 
           // Check for interactive tools. Orchestrator has its full preview/input
           // set; agent-direct mode only gets UI-side tools supplied by deps.
@@ -1835,6 +1856,23 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
               timestamp: Date.now(),
             });
           }
+        }
+
+        if (!finished) {
+          // the step limit: one last answer without tools rather than nothing
+          const prepared = await prepareContext([...messages, { role: "user", content: STEP_LIMIT_NUDGE, timestamp: Date.now() }]);
+          const closingResult = deps.streamLLM(m, { systemPrompt: fullSystemPrompt, messages: prepared.messages, tools: [] },
+            { ...streamOpts, ...(sessionId ? { sessionId } : {}) });
+          const closing = typeof closingResult?.[Symbol.asyncIterator] === "function" ? closingResult : await closingResult;
+          let closingText = "";
+          for await (const event of closing) {
+            if (event.type === "text_delta") {
+              closingText += event.delta;
+              appendTextSegment(segmentsAccum, event.delta);
+            }
+          }
+          await recordResponseUsage(await closing.result());
+          finalText += finalText.trim() && closingText.trim() ? `\n\n${closingText}` : closingText;
         }
 
         const promptTokens = Math.ceil(fullSystemPrompt.length / 4);

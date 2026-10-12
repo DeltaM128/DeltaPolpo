@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
-import { resolve, join } from "node:path";
-import { mkdirSync, existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
+import { resolve, join, dirname } from "node:path";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, watch, type FSWatcher } from "node:fs";
 import { getPolpoDir } from "./constants.js";
 import type { Server } from "node:net";
 import { parseConfig, loadPolpoConfig, savePolpoConfig, loadEnvFile, parseProviders } from "./config.js";
@@ -94,6 +94,10 @@ import { Scheduler } from "../scheduling/scheduler.js";
 import { TaskWatcherManager } from "./task-watcher.js";
 import { BackgroundWaitManager, type BackgroundWaitContinuation } from "./background-wait-manager.js";
 import { ConversationCheckManager, type ConversationCheckRunner } from "./conversation-check-manager.js";
+import { FileLearningStore, LearningManager, type LearningRunner, type LearningSkillPort } from "./learning.js";
+import {
+  assignSkillToAgent, createAgentSkill, loadSkillIndex, removeSkill, removeSkillFromIndex, unassignSkillFromAgent, updateSkillIndex,
+} from "../llm/skills.js";
 import type { ApprovalRequest, ApprovalStatus, ChannelReplyTarget, NotificationAction } from "./types.js";
 import { EncryptedVaultStore } from "../vault/encrypted-store.js";
 import type { VaultStore } from "./vault-store.js";
@@ -178,6 +182,8 @@ export class Orchestrator extends TypedEmitter {
   private watcherMgr?: TaskWatcherManager;
   private backgroundWaitMgr?: BackgroundWaitManager;
   private conversationCheckMgr?: ConversationCheckManager;
+  private learningMgr?: LearningManager;
+  private learningRunner?: LearningRunner;
   private conversationCheckRunner?: ConversationCheckRunner;
   private backgroundWaitContinuation?: BackgroundWaitContinuation;
   private telegramPoller?: TelegramCallbackPoller;
@@ -479,6 +485,69 @@ export class Orchestrator extends TypedEmitter {
   getBackgroundWaitManager(): BackgroundWaitManager | undefined { return this.backgroundWaitMgr; }
   /** Recurring checks agents run in a chat (schedule_check). */
   getConversationCheckManager(): ConversationCheckManager | undefined { return this.conversationCheckMgr; }
+  /** Agents learning from their conversations (learning in the agent config). */
+  getLearningManager(): LearningManager | undefined { return this.learningMgr; }
+  /** How a learning review runs: a turn of the agent's review session (set by the server). */
+  setLearningRunner(runner: LearningRunner): void {
+    this.learningRunner = runner;
+    this.learningMgr?.setRunner(runner);
+  }
+
+  /** The learning tools of an agent chat (set_learning; own skills while learning with skills is on). */
+  async learningTools(agent: AgentConfig): Promise<import("@earendil-works/pi-agent-core").AgentTool<any>[]> {
+    const { createLearningTools } = await import("../tools/learning-tools.js");
+    const { buildSkillFrontmatter } = await import("@polpo-ai/core");
+    const skills = this.learningSkillPort();
+    return createLearningTools({
+      agent,
+      manager: this.learningMgr,
+      skills,
+      ownedSkills: () => Object.entries(loadSkillIndex(this.polpoDir) ?? {}).filter(([, e]) => e.owner === agent.name).map(([name]) => name),
+      createOwnedSkill: async (name, description, content) => {
+        createAgentSkill(this.polpoDir, name, description, content);
+        updateSkillIndex(this.polpoDir, name, { owner: agent.name, category: "learned" });
+        await skills.assign(agent.name, name, true);
+        this.emit("skill:changed", { scope: "agent", action: "created", skillName: name, agentName: agent.name, timestamp: new Date().toISOString() });
+        return skills.read(name) ?? "";
+      },
+      skillFile: (name, description, content) => buildSkillFrontmatter(name, description) + content,
+      updateLearning: async (learning) => { await this.updateAgent(agent.name, { learning }); },
+    });
+  }
+
+  /** The agent skill pool, as learning reads and writes it (SKILL.md files, assignment to the agent). */
+  private learningSkillPort(): LearningSkillPort {
+    const file = (name: string) => join(this.polpoDir, "skills", name, "SKILL.md");
+    const changed = (action: "updated" | "deleted" | "assigned" | "unassigned", skillName: string, agentName?: string) =>
+      this.emit("skill:changed", { scope: "agent", action, skillName, ...(agentName ? { agentName } : {}), timestamp: new Date().toISOString() });
+    return {
+      read: (name) => { try { return readFileSync(file(name), "utf-8"); } catch { return undefined; } },
+      write: (name, content) => {
+        mkdirSync(dirname(file(name)), { recursive: true });
+        writeFileSync(file(name), content, "utf-8");
+        changed("updated", name);
+      },
+      remove: (name) => {
+        removeSkill(this.polpoDir, name);
+        removeSkillFromIndex(this.polpoDir, name);
+        changed("deleted", name);
+      },
+      assign: async (agentName, name, assigned) => {
+        const config = (await this.getAgents()).find((a) => a.name === agentName);
+        if (!config) return;
+        const names = new Set(config.skills ?? []);
+        if (assigned) names.add(name); else names.delete(name);
+        await this.updateAgent(agentName, { skills: [...names] });
+        // agents with a skills folder (symlinks) only see what is linked there
+        if (assigned && existsSync(join(this.polpoDir, "agents", agentName, "skills"))) {
+          assignSkillToAgent(this.polpoDir, agentName, name, join(this.polpoDir, "skills", name));
+        }
+        if (!assigned) unassignSkillFromAgent(this.polpoDir, agentName, name);
+        changed(assigned ? "assigned" : "unassigned", name, agentName);
+      },
+    };
+  }
+
   /** How a check runs: a turn of its own chat session (set by the server, like background waits). */
   setConversationCheckRunner(runner: ConversationCheckRunner): void {
     this.conversationCheckRunner = runner;
@@ -1102,6 +1171,19 @@ export class Orchestrator extends TypedEmitter {
     this.conversationCheckMgr.setDelivery((check, text) => this.deliverCheckReport(check, text));
     if (this.conversationCheckRunner) this.conversationCheckMgr.setRunner(this.conversationCheckRunner);
     this.conversationCheckMgr.start();
+
+    this.learningMgr = new LearningManager({
+      getAgents: () => this.getAgents(),
+      sessions: this.sessionStore,
+      memory: this.memoryStore,
+      store: new FileLearningStore(this.polpoDir),
+      skills: this.learningSkillPort(),
+      createReviewSession: (agent) => this.sessionStore.create(`Learning: ${agent}`, agent, { scope: `learning:${agent}` }),
+      emit: (event, payload) => this.emit(event, payload),
+      log: (level, message) => this.emit("log", { level, message }),
+    });
+    if (this.learningRunner) this.learningMgr.setRunner(this.learningRunner);
+    this.on("message:added", ({ sessionId }) => { void this.learningMgr?.onMessageAdded(sessionId); });
 
     if (supportsBackgroundWaits(this.taskControlStore)) {
       this.backgroundWaitMgr = new BackgroundWaitManager(this, this.registry, this.taskControlStore);
@@ -1745,6 +1827,7 @@ export class Orchestrator extends TypedEmitter {
     this.stopped = true;
     this.backgroundWaitMgr?.dispose();
     this.conversationCheckMgr?.dispose();
+    this.learningMgr?.dispose();
     this.engine?.stop();
   }
 
@@ -1757,6 +1840,7 @@ export class Orchestrator extends TypedEmitter {
     this.stopped = true;
     this.backgroundWaitMgr?.dispose();
     this.conversationCheckMgr?.dispose();
+    this.learningMgr?.dispose();
     for (const key of [...this.chatWorkspaces.keys()]) await this.closeChatWorkspace(key, "shutdown");
     for (const { guard } of this.chatBrowserGuards.values()) await guard.close().catch(() => undefined);
     this.chatBrowserGuards.clear();
@@ -1826,6 +1910,7 @@ export class Orchestrator extends TypedEmitter {
     this.scheduler?.dispose();
     this.backgroundWaitMgr?.dispose();
     this.conversationCheckMgr?.dispose();
+    this.learningMgr?.dispose();
     await this.registry.close?.();
     await this.runStore.close();
     this.emit("orchestrator:shutdown", {});

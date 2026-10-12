@@ -657,7 +657,7 @@ describe("ChannelGateway — dedicated bot suggestions", () => {
 });
 
 describe("ChannelGateway — files from agents", () => {
-  it("returns files with the reply and no 'nothing to say' when only a file was produced", async () => {
+  it("returns files with the reply and no 'no reply' message when only a file was produced", async () => {
     const runner = vi.fn<ChannelChatRunner>().mockResolvedValue({ text: "", files: [{ path: "/w/plan.pdf", filename: "plan.pdf" }] });
     const { gateway, send } = setup({ runner });
     await send("/agent backend");
@@ -665,10 +665,10 @@ describe("ChannelGateway — files from agents", () => {
     expect(reply).toEqual({ text: "", files: [{ path: "/w/plan.pdf", filename: "plan.pdf" }] });
   });
 
-  it("still says 'nothing to say' when there is neither text nor file", async () => {
+  it("says what happened and where to look when there is neither text nor file", async () => {
     const runner = vi.fn<ChannelChatRunner>().mockResolvedValue({ text: "" });
     const { send } = setup({ runner });
     await send("/agent backend");
-    expect(await send("?")).toContain("nothing to say");
+    expect(await send("?")).toBe("backend finished without writing a reply. Ask again, or open this chat in the web app to see what it did.");
   });
 });

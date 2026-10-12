@@ -320,6 +320,21 @@ export interface Pipeline {
  */
 export type VoiceReplyMode = "off" | "voice" | "always";
 
+/**
+ * Learning from conversations (opt-in per agent): every `everyMessages` new messages in the agent's
+ * chats, or after `idleMinutes` of quiet, the agent reviews them (with its own model) and updates its
+ * memory and its own skills. Changes apply directly and can be reverted.
+ */
+export interface AgentLearningSettings {
+  enabled?: boolean;
+  /** New messages (all the agent's chats) between two reviews. Default 30. */
+  everyMessages?: number;
+  /** Review what is pending after this long without new messages. Default 30; 0 = never. */
+  idleMinutes?: number;
+  /** May create and update its own skills (not only memory). Default true. */
+  skills?: boolean;
+}
+
 export interface AgentConfig {
   name: string;
   /** ISO timestamp of when this agent was created / added to the team. Auto-set by addAgent(). */
@@ -359,6 +374,8 @@ export interface AgentConfig {
   compaction?: import("./context-compactor.js").CompactionSettings;
   /** Voice replies in chats (Telegram); default "off". The agent can change it (set_voice_replies). */
   voiceReplies?: VoiceReplyMode;
+  /** Learning from its conversations (memory, own skills); off by default. The agent can change it (set_learning). */
+  learning?: AgentLearningSettings;
   /** Where this agent's tools run (sandbox), set by a person: overrides the instance default. */
   sandbox?: import("./sandbox.js").SandboxSettings;
   /** Runtime profile used by deterministic loop execution. */

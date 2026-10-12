@@ -32,7 +32,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { nanoid } from "nanoid";
-import { sessionLeases } from "@polpo-ai/server";
+import { EMPTY_REPLY_NUDGE, STEP_LIMIT_NUDGE, sessionLeases } from "@polpo-ai/server";
 import type { Orchestrator } from "../core/orchestrator.js";
 import type { PeerStore } from "../core/peer-store.js";
 import type { SessionStore } from "../core/session-store.js";
@@ -250,6 +250,10 @@ export function speakableText(text: string): string {
     .trim();
   return plain.length > 4000 ? `${plain.slice(0, 3990)}…` : plain;
 }
+
+/** What a channel says when a turn ended without a reply even after being asked for one. */
+export const NO_REPLY_FALLBACK = (who: string) =>
+  `${who} finished without writing a reply. Ask again, or open this chat in the web app to see what it did.`;
 
 /** Build the user turn: caption (or a short description) plus image/file parts. */
 export function attachmentContent(text: string, attachments: InboundAttachment[]): ChannelContentPart[] {
@@ -1503,11 +1507,13 @@ export class ChannelGateway {
       });
 
       // Run the agentic loop (non-streaming for messaging)
-      const MAX_TURNS = 15;
+      const MAX_TURNS = 40;
       const messages: Message[] = [...piMessages];
       let overflowRetried = false;
       let finalText = "";
       let sentPartials = false;
+      let nudgedEmpty = false;
+      let finished = false;
 
 
 
@@ -1555,6 +1561,13 @@ export class ChannelGateway {
         if (toolCalls.length === 0) {
           // No tool calls — this turn's text is the final answer
           finalText += turnText;
+          // ended without a word (often right after tools): ask once for the answer
+          if (!finalText.trim() && !sentPartials && !nudgedEmpty && turn + 1 < MAX_TURNS) {
+            nudgedEmpty = true;
+            messages.push({ role: "user", content: EMPTY_REPLY_NUDGE, timestamp: Date.now() });
+            continue;
+          }
+          finished = true;
           break;
         }
 
@@ -1587,6 +1600,21 @@ export class ChannelGateway {
       }
 
       // Store assistant response
+      if (!finished) {
+        // the step limit: one last answer without tools rather than nothing
+        const prepared = await compaction.prepare([...messages, { role: "user", content: STEP_LIMIT_NUDGE, timestamp: Date.now() }]);
+        const closing = await streamSimpleWithAuth(m, {
+          systemPrompt: systemPrompt + peerContext + channelContext,
+          messages: prepared.messages as Message[],
+          tools: [],
+        }, { ...streamOpts, sessionId });
+        let closingText = "";
+        for await (const event of closing) {
+          if (event.type === "text_delta") closingText += event.delta;
+        }
+        finalText += finalText.trim() && closingText.trim() ? `\n\n${closingText}` : closingText;
+      }
+
       if (finalText) {
         await this.sessionStore.addMessage(sessionId, "assistant", finalText);
       }
@@ -1598,7 +1626,8 @@ export class ChannelGateway {
 
       // If all text was already sent as partials, nothing left to return
       if (!finalText && sentPartials) return undefined;
-      return finalText || "I processed your request but have nothing to say.";
+      if (!finalText.trim()) this.log("warn", `Polpo ended a turn without a reply (session ${sessionId}, ${finished ? "after a nudge" : "step limit"})`);
+      return finalText || NO_REPLY_FALLBACK("Polpo");
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       return `Sorry, I encountered an error: ${errMsg}`;
@@ -1641,7 +1670,8 @@ export class ChannelGateway {
     const { text, files = [] } = await runner({ agent, sessionId, messages, origin: this.checkTarget(msg) });
 
     const body = text.trim();
-    const reply = body || (files.length > 0 ? "" : `${who} processed your request but has nothing to say.`);
+    if (!body && files.length === 0) this.log("warn", `${who} ended a turn without a reply (session ${sessionId})`);
+    const reply = body || (files.length > 0 ? "" : NO_REPLY_FALLBACK(who));
     const capped = reply.length > MAX_REPLY_CHARS ? reply.slice(0, MAX_REPLY_CHARS - 10) + "\n\n... (truncated)" : reply;
     return files.length > 0 ? { text: capped, files } : capped;
   }

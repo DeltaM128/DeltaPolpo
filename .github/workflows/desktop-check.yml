@@ -156,10 +156,31 @@ jobs:
         run: |
           $setup = Get-ChildItem ui/release -Filter "Polpo*Setup*.exe" | Select-Object -First 1
           if (-not $setup) { throw "installer not found in ui/release" }
+          # a silent NSIS install aborts when the app is running: the packaged app used above may
+          # still have Polpo.exe processes (Electron children) or its server alive
+          foreach ($name in "Polpo", "polpo-server") { Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force }
+          for ($i = 0; $i -lt 30 -and (Get-Process -Name "Polpo", "polpo-server" -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
           Write-Host "Installing $($setup.Name)"
-          Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
-          $installed = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Polpo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $installed) { throw "Polpo.exe not found after installing" }
+          $proc = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
+          Write-Host "Installer exit code: $($proc.ExitCode)"
+          if ($proc.ExitCode -ne 0) {
+            # say why (the faulting module of a crash), then try once more: is it constant or random?
+            Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProviderName -in "Application Error", "Windows Error Reporting", ".NET Runtime" } |
+              Select-Object -First 6 | Format-List TimeCreated, ProviderName, Message
+            $proc = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
+            Write-Host "Installer exit code (second try): $($proc.ExitCode)"
+          }
+          # the NSIS installer may hand over to a copy of itself and return early: wait for the app
+          $installed = $null
+          for ($i = 0; $i -lt 120 -and -not $installed; $i++) {
+            $installed = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "Polpo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $installed) { Start-Sleep -Seconds 1 }
+          }
+          if (-not $installed) { throw "Polpo.exe not found 2 minutes after installing" }
+          # and for the installer to finish writing it (resources next to the exe)
+          for ($i = 0; $i -lt 60 -and -not (Test-Path (Join-Path $installed.DirectoryName "resources\polpo-server.exe")); $i++) { Start-Sleep -Seconds 1 }
+          Get-Process | Where-Object { $_.Path -like "*Polpo*Setup*" } | Wait-Process -Timeout 120 -ErrorAction SilentlyContinue
           Write-Host "Installed at $($installed.FullName)"
           Get-ChildItem (Join-Path $installed.DirectoryName "resources") | Select-Object Name
           "POLPO_INSTALLED=$($installed.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

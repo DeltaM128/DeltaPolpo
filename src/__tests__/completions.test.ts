@@ -878,3 +878,53 @@ describe("POST /v1/chat/completions", () => {
     });
   });
 });
+
+
+// ── Turns that end without a reply ──────────────────────
+
+describe("empty replies (non-streaming, what channels use)", () => {
+  const lastUserText = (args: unknown[]) => {
+    const messages = (args[1] as { messages: Array<{ role: string; content: unknown }> }).messages;
+    const last = [...messages].reverse().find((m) => m.role === "user");
+    return typeof last?.content === "string" ? last.content : JSON.stringify(last?.content);
+  };
+
+  test("a turn that ends silently after tools is asked once for its answer", async () => {
+    const calls: unknown[][] = [];
+    const next = mockTurnSequence([
+      mockToolCallResponse("get_status", {}),
+      mockTextResponse(""),
+      mockTextResponse("Done: 3 tasks are running."),
+    ]);
+    setStreamImpl((...args: unknown[]) => { calls.push(args); return next(); });
+    const body = await parseJson(await postCompletions({ stream: false, messages: [{ role: "user", content: "status?" }] }));
+    expect((body.choices as any[])[0].message.content).toBe("Done: 3 tasks are running.");
+    expect(calls).toHaveLength(3);
+    expect(lastUserText(calls[2]!)).toContain("Your turn ended without a reply");
+  });
+
+  test("a completely empty answer is asked again once, and stays empty without looping", async () => {
+    const calls: unknown[][] = [];
+    setStreamImpl((...args: unknown[]) => { calls.push(args); return mockTextStream(""); });
+    const body = await parseJson(await postCompletions({ stream: false, messages: [{ role: "user", content: "hi" }] }));
+    expect((body.choices as any[])[0].message.content).toBe("");
+    expect(calls).toHaveLength(2);
+  });
+
+  test("at the step limit the agent answers once more, without tools, instead of nothing", async () => {
+    await orchestrator.addAgent({ name: "agent-2", role: "Short agent", maxTurns: 2 });
+    const calls: unknown[][] = [];
+    setStreamImpl((...args: unknown[]) => {
+      calls.push(args);
+      const options = args[1] as { tools: unknown[] };
+      if (options.tools.length === 0) return mockTextStream("I listed the files; the report is still to write.");
+      return mockToolCallStream("set_session_title", { title: "Busy" });
+    });
+    const body = await parseJson(await postCompletions({ agent: "agent-2", stream: false, messages: [{ role: "user", content: "work" }] }));
+    expect((body.choices as any[])[0].message.content).toBe("I listed the files; the report is still to write.");
+    expect(calls).toHaveLength(3); // 2 steps + the closing answer
+    expect((calls[2]![1] as { tools: unknown[] }).tools).toEqual([]);
+    expect(lastUserText(calls[2]!)).toContain("limit of steps");
+    await orchestrator.removeAgent("agent-2");
+  });
+});
