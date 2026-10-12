@@ -1870,6 +1870,18 @@ export async function buildChatSystemPrompt(
     ``,
     describeVoiceReplies(config?.settings?.voiceReplies),
     `Agents have their own setting (voiceReplies), which they or you change with set_voice_replies.`,
+    ``,
+    `## What agents can do in chats`,
+    ``,
+    `- **Learning** (off by default): an agent with learning on reviews its conversations every N new messages (or after`,
+    `  some quiet minutes) with its own model, keeps its memory current, and writes repeated procedures down as skills of`,
+    `  its own. Changes apply directly and can be undone. Turn it on or off with update_agent`,
+    `  ({ learning: { enabled, everyMessages?, idleMinutes?, skills? } }); the agent can also do it itself (set_learning).`,
+    `  "What did X learn?" → get_agent_learning; "have X learn now" → review_agent_learning; "undo that" →`,
+    `  revert_agent_learning with the change id.`,
+    `- **Recurring checks**: agents have schedule_check too; reports go to the chat or group they were asked in.`,
+    `- **Voice replies**: update_agent voiceReplies, or set_voice_replies (theirs or yours).`,
+    `- **Reactions**: on Telegram an answer that is a single emoji becomes a reaction on the message.`,
   );
 
   // ── Skill creation guidance ──
