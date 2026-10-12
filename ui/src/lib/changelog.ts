@@ -27,6 +27,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-12-polpo-knows-agents",
+    date: "2026-10-12",
+    kind: "improved",
+    title: "Polpo sa cosa sanno fare gli agenti",
+    summary: "Chiedi a Polpo di far imparare un agente, cosa ha imparato o di annullarlo: ora lo sa fare.",
+    body: [
+      "Polpo ora conosce le capacità degli agenti nelle chat (**apprendimento**, **controlli ricorrenti**, **risposte vocali**, **reazioni**) e le gestisce per te:",
+      "",
+      "- \"Fai imparare **Marco** dalle sue chat\": attiva l'apprendimento dell'agente.",
+      "- \"Cosa ha imparato Marco?\": mostra le modifiche a memoria e skill.",
+      "- \"Fallo ripassare adesso\" o \"annulla quella modifica\": avvia una revisione o la annulla.",
+      "",
+      "Anche gli agenti sanno di poter programmare un controllo invece di promettere di avvisarti, e di poter cambiare da soli apprendimento e voce quando glielo chiedi.",
+    ].join("\n"),
+  },
+  {
     id: "2026-10-12-no-empty-replies",
     date: "2026-10-12",
     kind: "fixed",
