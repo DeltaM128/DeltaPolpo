@@ -391,6 +391,13 @@ export const AddAgentSchema = z.object({
   browserProfile: z.string().optional(),
   sandbox: z.any().optional(),
   compaction: z.any().optional(),
+  voiceReplies: z.enum(["off", "voice", "always"]).optional(),
+  learning: z.object({
+    enabled: z.boolean().optional(),
+    everyMessages: z.number().int().min(5).optional(),
+    idleMinutes: z.number().int().min(0).optional(),
+    skills: z.boolean().optional(),
+  }).strict().optional(),
 });
 
 export const UpdateAgentSchema = z.object({
@@ -410,6 +417,15 @@ export const UpdateAgentSchema = z.object({
   sandbox: z.any().optional(),
   /** Context compaction overrides for this agent. */
   compaction: z.any().optional(),
+  /** Voice replies on Telegram: off (default), voice, always. */
+  voiceReplies: z.enum(["off", "voice", "always"]).optional(),
+  /** Learning from its conversations (memory, own skills); off by default. */
+  learning: z.object({
+    enabled: z.boolean().optional(),
+    everyMessages: z.number().int().min(5).optional(),
+    idleMinutes: z.number().int().min(0).optional(),
+    skills: z.boolean().optional(),
+  }).strict().optional(),
   runtime: z.string().min(1).optional(),
   loops: AgentLoopsSchema.optional(),
   pipeline: PipelineSchema.optional(),

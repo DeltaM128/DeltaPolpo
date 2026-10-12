@@ -74,6 +74,8 @@ export interface SkillIndexEntry {
   tags?: string[];
   /** Macro-category for grouping. */
   category?: string;
+  /** The agent that created the skill (learning): only it may update it with update_my_skill. */
+  owner?: string;
 }
 
 /** The full skills index: maps skill names to their index metadata. */

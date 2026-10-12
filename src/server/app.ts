@@ -60,6 +60,7 @@ import { whatsappRoutes } from "./routes/whatsapp.js";
 import { emailRoutes } from "./routes/email.js";
 import { codingRoutes } from "./routes/coding.js";
 import { roomRoutes } from "./routes/rooms.js";
+import { learningRoutes } from "./routes/learning.js";
 import { syncRoutes } from "./routes/sync.js";
 import { browserDashboardRoutes } from "./routes/browser-dashboard.js";
 import { appPreviewRoutes } from "./routes/app-preview.js";
@@ -432,6 +433,10 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       if (!existingToolNames.has("ask_user")) {
         tools.push(askUserTool);
       }
+      // Learning from its conversations: off by default; set_learning, and its own skills while learning
+      if (!existingToolNames.has("set_learning")) {
+        tools.push(...(await o.learningTools(agentConfig)).filter((tool) => !existingToolNames.has(tool.name)));
+      }
       // Voice replies on Telegram: off by default, the agent knows its mode and changes it when asked
       if (!existingToolNames.has("set_voice_replies")) {
         const { createVoiceReplyTool } = await import("../tools/voice-reply-tools.js");
@@ -608,6 +613,36 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       throw new Error(payload?.error?.message ?? payload?.error ?? `Continuation failed (${response.status})`);
     }
     return "completed";
+  });
+
+  // A learning review is a turn of the agent's review session (its own model and tools).
+  o?.setLearningRunner(async ({ agent, sessionId, prompt, signal }) => {
+    if (sessionLeases.isHeld(sessionId)) return "deferred";
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-session-id": sessionId,
+      ...internalCallHeaders(),
+    };
+    if (opts?.apiKeys?.[0]) headers.authorization = `Bearer ${opts.apiKeys[0]}`;
+    const history = await o.getSessionStore()?.getMessages(sessionId) ?? [];
+    const response = await completionApp.request(new Request("http://polpo.internal/", {
+      method: "POST",
+      headers,
+      signal,
+      body: JSON.stringify({
+        stream: false,
+        agent: agent.name,
+        messages: [
+          ...history.filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role, content: m.content })),
+          { role: "user", content: prompt },
+        ],
+      }),
+    }));
+    if (response.status === 409) return "deferred";
+    const payload = await response.json().catch(() => null) as any;
+    if (!response.ok) throw new Error(payload?.error?.message ?? payload?.error ?? `Learning review failed (${response.status})`);
+    const content = payload?.choices?.[0]?.message?.content;
+    return { text: typeof content === "string" ? content : "" };
   });
 
   // A recurring check runs as a turn of its own session (it remembers its earlier runs and keeps
@@ -831,6 +866,11 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
   })));
 
   authed.route("/events", eventRoutes(sseBridge));
+
+  authed.route("/learning", learningRoutes(() => ({
+    manager: o.getLearningManager(),
+    getAgents: () => o.getAgents(),
+  })));
 
   authed.route("/rooms", roomRoutes(() => ({
     rooms: o.getRoomStore(),

@@ -1,5 +1,6 @@
 // An OpenAI-compatible model for CI smoke tests: every chat completion answers MOCK_LLM_REPLY
 // (streaming or not), so a packaged app can be used end to end without a real provider.
+// A learning review ("[Learning:" in the last user message) first calls memory_save, then answers.
 // Usage: MOCK_LLM_PORT=9911 MOCK_LLM_REPLY="..." node .github/scripts/mock-llm.mjs
 import http from "node:http";
 
@@ -31,6 +32,18 @@ http.createServer((req, res) => {
     console.log(`[mock-llm] ${request.stream ? "stream" : "json"} completion, ${request.messages?.length ?? 0} messages`);
     const id = `chatcmpl-${Date.now()}`;
     const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
+    const messages = request.messages ?? [];
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const userText = typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content ?? "");
+    const toolDone = messages.length > 0 && messages[messages.length - 1].role === "tool";
+    if (userText.includes("[Learning:") && !toolDone && request.stream) {
+      const call = { index: 0, id: `call_${Date.now()}`, type: "function", function: { name: "memory_save", arguments: JSON.stringify({ content: "- learned by the mock model" }) } };
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      res.write(chunk(id, { role: "assistant", content: null, tool_calls: [call] }, null));
+      res.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage })}\n\n`);
+      res.end("data: [DONE]\n\n");
+      return;
+    }
     if (request.stream) {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
       res.write(chunk(id, { role: "assistant", content: "" }, null));
