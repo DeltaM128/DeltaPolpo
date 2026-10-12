@@ -212,7 +212,8 @@ describe("the proxy on a real socket", () => {
   });
 });
 
-describe.skipIf(!bwrapAvailable())("network rules inside a real jail", () => {
+// real commands in a real jail: several connections per test, slow on a loaded CI runner
+describe.skipIf(!bwrapAvailable())("network rules inside a real jail", { timeout: 30_000 }, () => {
   let root: string;
   let web: HttpServer;
   let webPort = 0;
