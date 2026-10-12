@@ -236,3 +236,36 @@ describe("learning tools", () => {
     expect(skills.assigned.get("ops")?.has("weekly-report")).toBe(false);
   });
 });
+
+describe("Polpo's learning tools", () => {
+  async function polpoTools() {
+    const { executeOrchestratorTool } = await import("../llm/orchestrator-tools.js");
+    const updateAgent = vi.fn(async () => {});
+    const polpo = { getAgents: async () => agents, getLearningManager: () => manager, updateAgent } as any;
+    return { run: (name: string, args: Record<string, unknown>) => executeOrchestratorTool(name, args, polpo), updateAgent };
+  }
+
+  it("shows an agent's setting and changes, reviews only when learning is on, reverts by id", async () => {
+    const { run } = await polpoTools();
+    await memory.save("old", agentMemoryScope("ops"));
+    runner.mockImplementation(async () => { await memory.save("new", agentMemoryScope("ops")); return { text: "ok" }; });
+    const chat = await sessions.create("Chat", "ops");
+    for (const text of ["a", "b", "c", "d"]) sessions.say(chat, "user", text);
+
+    expect(await run("review_agent_learning", { agent: "quiet" })).toMatch(/learning is off for quiet/);
+    const reviewed = await run("review_agent_learning", { agent: "ops" });
+    expect(reviewed).toMatch(/^ops learned:\n- lrn_\S+ .* memory \(review, \+0 chars\)/);
+    const id = /lrn_\S+/.exec(reviewed)![0];
+
+    expect(await run("get_agent_learning", { agent: "ops" })).toContain("Learning of ops: on: every 4 messages");
+    expect(await run("revert_agent_learning", { agent: "ops", change_id: id })).toBe(`Reverted ${id} (memory).`);
+    expect(memory.data.get(agentMemoryScope("ops"))).toBe("old");
+    expect(await run("get_agent_learning", { agent: "nobody" })).toBe('Error: no agent "nobody"');
+  });
+
+  it("update_agent turns learning and voice replies on for an agent", async () => {
+    const { run, updateAgent } = await polpoTools();
+    await run("update_agent", { name: "quiet", learning: { enabled: true, everyMessages: 20 }, voiceReplies: "voice" });
+    expect(updateAgent).toHaveBeenCalledWith("quiet", expect.objectContaining({ learning: { enabled: true, everyMessages: 20 }, voiceReplies: "voice" }));
+  });
+});

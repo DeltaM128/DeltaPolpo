@@ -765,6 +765,76 @@ const updateMissionNotificationsTool: Tool = {
 //  TEAM & AGENT TOOLS (4)
 // ═══════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════
+//  AGENT LEARNING (3): what agents learned from their conversations
+// ═══════════════════════════════════════════════════════
+
+/** Agent learning settings, as add_agent / update_agent take them. */
+const agentLearningParam = Type.Optional(Type.Object({
+  enabled: Type.Boolean({ description: "Learn from its conversations (review them, update memory and its own skills)" }),
+  everyMessages: Type.Optional(Type.Number({ minimum: 5, description: "New messages between two reviews (default 30)" })),
+  idleMinutes: Type.Optional(Type.Number({ minimum: 0, description: "Review after this many quiet minutes (default 30, 0 = never)" })),
+  skills: Type.Optional(Type.Boolean({ description: "Also create and update its own skills, not only memory (default true)" })),
+}, { description: "Learning from its conversations: off by default. Changes apply directly and can be reverted (revert_agent_learning). Omit to keep current." }));
+const agentVoiceRepliesParam = Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("voice"), Type.Literal("always")], {
+  description: "Telegram voice replies: off (default), voice (answer voice messages with one), always. Omit to keep current.",
+}));
+
+const getAgentLearningTool: Tool = {
+  name: "get_agent_learning",
+  description: "An agent's learning setting and what it learned from its conversations (memory and own-skill changes, newest first, with ids for revert_agent_learning).",
+  parameters: Type.Object({
+    agent: Type.String({ description: "Agent name" }),
+    limit: Type.Optional(Type.Number({ description: "Changes to show (default 10)" })),
+  }),
+};
+const reviewAgentLearningTool: Tool = {
+  name: "review_agent_learning",
+  description: "Have an agent review its conversations now (learning must be on): it updates its memory and own skills. Returns what changed.",
+  parameters: Type.Object({ agent: Type.String({ description: "Agent name" }) }),
+};
+const revertAgentLearningTool: Tool = {
+  name: "revert_agent_learning",
+  description: "Undo one learning change of an agent (id from get_agent_learning): puts back its memory or skill as it was. Refused if it changed again since.",
+  parameters: Type.Object({
+    agent: Type.String({ description: "Agent name" }),
+    change_id: Type.String({ description: "Change id (lrn_…)" }),
+  }),
+};
+
+function describeChange(c: { id: string; kind: string; target: string; at: string; source: string; revertedAt?: string; before: string; after: string }): string {
+  const what = c.kind === "memory" ? "memory" : `${c.kind === "skill-created" ? "new skill" : "skill updated"} ${c.target}`;
+  const delta = c.after.length - c.before.length;
+  return `- ${c.id} ${c.at.slice(0, 16).replace("T", " ")} ${what} (${c.source}, ${delta >= 0 ? "+" : ""}${delta} chars)${c.revertedAt ? " [reverted]" : ""}`;
+}
+
+async function execAgentLearning(polpo: Orchestrator, toolName: string, args: Record<string, unknown>): Promise<string> {
+  const name = String(args.agent ?? "");
+  const agent = resolveAgent(await polpo.getAgents(), name);
+  if (!agent) return `Error: no agent "${name}"`;
+  const manager = polpo.getLearningManager();
+  if (!manager) return "Error: learning is not available on this instance";
+  if (toolName === "get_agent_learning") {
+    const s = agent.learning;
+    const setting = s?.enabled
+      ? `on: every ${s.everyMessages ?? 30} messages or ${s.idleMinutes ?? 30} quiet minutes, ${s.skills === false ? "memory only" : "memory and own skills"}`
+      : "off";
+    const changes = manager.listChanges(agent.name, Math.min(Math.max(Number(args.limit) || 10, 1), 50));
+    return `Learning of ${agent.name}: ${setting}.\n${changes.length ? changes.map(describeChange).join("\n") : "No changes yet."}`;
+  }
+  if (toolName === "review_agent_learning") {
+    if (!agent.learning?.enabled) return `Error: learning is off for ${agent.name}; turn it on with update_agent (learning.enabled)`;
+    const changes = await manager.review(agent.name, "manual");
+    return changes.length ? `${agent.name} learned:\n${changes.map(describeChange).join("\n")}` : `${agent.name} found nothing new to learn.`;
+  }
+  try {
+    const reverted = await manager.revert(agent.name, String(args.change_id ?? ""));
+    return `Reverted ${reverted.id} (${reverted.kind === "memory" ? "memory" : reverted.target}).`;
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 const addAgentTool: Tool = {
   name: "add_agent",
   description: "Add a new agent to a team. If no team is specified, adds to the default (first) team. Use allowedTools to grant extended tool access (e.g. ['browser_*', 'email_*', 'image_*', 'video_*', 'audio_*', 'excel_*', 'pdf_*', 'docx_*', 'whatsapp_*', 'phone_*']). phone_* grants the agent the VAPI phone tools and requires VAPI credentials in that agent's vault or environment. Core tools (including vault_get/vault_list) are always available. Use allowedTools to restrict to specific tool names.",
@@ -788,6 +858,8 @@ const addAgentTool: Tool = {
     maxConcurrency: Type.Optional(Type.Number({ description: "Max concurrent tasks this agent can run. Default: 1" })),
     browserProfile: Type.Optional(Type.String({ description: "Persistent browser profile name (shares cookies/state across tasks). Requires browser_* in allowedTools." })),
     emailAllowedDomains: Type.Optional(Type.Array(Type.String(), { description: "Restrict email sending to these domains only (e.g. ['company.com'])" })),
+    learning: agentLearningParam,
+    voiceReplies: agentVoiceRepliesParam,
   }),
 };
 
@@ -849,6 +921,8 @@ const updateAgentTool: Tool = {
     browserProfile: Type.Optional(Type.String({ description: "Persistent browser profile name" })),
     emailAllowedDomains: Type.Optional(Type.Array(Type.String(), { description: "Restrict email to these domains" })),
     sandbox: agentSandboxParam,
+    learning: agentLearningParam,
+    voiceReplies: agentVoiceRepliesParam,
   }),
 };
 
@@ -2008,7 +2082,7 @@ export const READ_TOOLS = new Set([
   "list_agents", "get_team", "get_memory", "get_config",
   "list_approvals", "list_checkpoints", "list_delays", "get_logs",
   // Read-only listing tools
-  "list_schedules", "list_checks", "list_models", "list_notification_rules", "list_watchers", "wait_for_task",
+  "list_schedules", "list_checks", "list_models", "get_agent_learning", "list_notification_rules", "list_watchers", "wait_for_task",
   // Skills (read-only)
   "list_orchestrator_skills", "list_agent_skills", "search_skills", "get_skill",
   // Playbooks (read-only)
@@ -2045,6 +2119,8 @@ export const WRITE_TOOLS = new Set([
   "create_schedule", "delete_schedule", "update_schedule",
   // Voice replies
   "set_voice_replies",
+  // Agent learning
+  "review_agent_learning", "revert_agent_learning",
   // Conversation checks
   "schedule_check", "cancel_check",
   // Notification rules
@@ -2176,6 +2252,8 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
   scheduleCheckTool, listChecksTool, cancelCheckTool,
   // Model catalog
   listModelsTool,
+  // Agent learning
+  getAgentLearningTool, reviewAgentLearningTool, revertAgentLearningTool,
   // Notification rules (2 write + 1 read above + 1 direct send)
   addNotificationRuleTool, removeNotificationRuleTool, sendNotificationTool,
   // Task watchers (2 write + 2 read above)
@@ -2323,6 +2401,9 @@ const TOOL_LABELS: Record<string, string> = {
   list_checks: "List Checks",
   cancel_check: "Cancel Check",
   list_models: "List Models",
+  get_agent_learning: "Agent Learning",
+  review_agent_learning: "Review Agent Learning",
+  revert_agent_learning: "Revert Agent Learning",
   // Notification rules
   add_notification_rule: "Add Notification Rule",
   remove_notification_rule: "Remove Notification Rule",
@@ -2576,6 +2657,9 @@ export async function executeOrchestratorTool(
       case "update_schedule":      return execUpdateSchedule(polpo, args);
       case "set_voice_replies":    return execSetVoiceReplies(polpo, args);
       case "list_models":          return execListModels(args);
+      case "get_agent_learning":
+      case "review_agent_learning":
+      case "revert_agent_learning": return execAgentLearning(polpo, toolName, args);
 
       // ── Conversation checks (this chat) ──
       case "schedule_check": return execScheduleCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId, origin: context.origin });
@@ -3849,6 +3933,8 @@ async function execAddAgent(polpo: Orchestrator, args: Record<string, unknown>):
     maxConcurrency: args.maxConcurrency as number | undefined,
     browserProfile: args.browserProfile as string | undefined,
     emailAllowedDomains: args.emailAllowedDomains as string[] | undefined,
+    learning: args.learning as AgentConfig["learning"] | undefined,
+    voiceReplies: args.voiceReplies as AgentConfig["voiceReplies"] | undefined,
   };
   // Strip undefined values so addAgent only receives explicitly set fields
   const cleaned = Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined));
@@ -3895,6 +3981,8 @@ async function execUpdateAgent(polpo: Orchestrator, args: Record<string, unknown
   if (args.browserProfile !== undefined) updates.browserProfile = args.browserProfile as string;
   if (args.emailAllowedDomains !== undefined) updates.emailAllowedDomains = args.emailAllowedDomains as string[];
   if (args.team !== undefined) updates.team = args.team as string;
+  if (args.learning !== undefined) updates.learning = args.learning as AgentConfig["learning"];
+  if (args.voiceReplies !== undefined) updates.voiceReplies = args.voiceReplies as AgentConfig["voiceReplies"];
   let sandboxNote = "";
   if (args.sandbox !== undefined) {
     const requested = (args.sandbox ?? {}) as Record<string, any>;

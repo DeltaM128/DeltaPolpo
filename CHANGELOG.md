@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-10-12 — Polpo Knows
+
+### Added
+- Polpo knows what agents can do in chats and can manage it:
+  - **Prompt:** a "What agents can do in chats" section covering learning, recurring checks, voice replies and reactions.
+  - **`add_agent` / `update_agent`:** take `learning` and `voiceReplies`.
+  - **New tools:** `get_agent_learning` (setting and recent changes), `review_agent_learning` (review now) and `revert_agent_learning` (undo a change by id).
+- Agents' chat instructions say to use `schedule_check` to follow up instead of promising, and to change their own learning and voice settings when asked.
+
 ## [0.4.5] — 2026-10-12 — Learning Agents
 
 ### Added

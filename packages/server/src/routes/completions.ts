@@ -651,6 +651,10 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
         "the user asks to view a file, move to a Polpo page, or open an external URL.",
         "After one of those client-side tools completes, the UI sends a system acknowledgement;",
         "treat it as the tool result and do not repeat the same UI action for the same request.",
+        "To follow up later (\"check every 10 minutes\", \"tell us when it is done\"), use schedule_check when you have it;",
+        "never promise to notify later without it: nothing runs after this turn.",
+        "When someone asks you to learn from your conversations (or to stop), or to answer with voice messages,",
+        "change it yourself with set_learning or set_voice_replies.",
       ].join("\n");
 
       // Keep the chat-mode rules last: buildAgentPrompt is shared with
