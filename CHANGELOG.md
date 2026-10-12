@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The agent API (`POST`/`PATCH /agents`) dropped `learning` and `voiceReplies` (#119)
+- Telegram: "…processed your request but has nothing to say".
+  - A turn that ended without a word (usually right after tool calls) is now asked once for its reply.
+  - At the step limit the agent writes one last answer without tools instead of stopping silently. Polpo's Telegram loop goes from 15 to 40 steps.
+  - What is left says what happened and where to look, and logs a warning
 
 ## [0.4.4] — 2026-10-11 — Checks, Voice, Reactions
 
