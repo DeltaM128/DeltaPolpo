@@ -27,6 +27,23 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-13-send-anywhere",
+    date: "2026-10-13",
+    kind: "new",
+    title: "Agenti liberi di scrivere ovunque",
+    summary: "Messaggi e promemoria verso qualsiasi gruppo o persona, subito, a un'ora precisa o ricorrenti.",
+    body: [
+      "Agenti e Polpo ora scrivono in **qualsiasi chat** di Telegram, da dovunque glielo chiedi (web, privato o un altro gruppo):",
+      "",
+      "- \"Scrivi al gruppo **Marketing** che la release è uscita\": il messaggio parte subito.",
+      "- \"Ogni lunedì alle 9 ricorda al gruppo la riunione\": promemoria ricorrente, anche con orari cron.",
+      "- \"Domani alle 8 manda a Marco il riepilogo\": una volta sola, all'ora che dici.",
+      "",
+      "Se il bot dell'agente non è in quel gruppo, il messaggio lo manda un altro bot dell'istanza.",
+    ].join("\n"),
+    highlight: true,
+  },
+  {
     id: "2026-10-12-polpo-knows-agents",
     date: "2026-10-12",
     kind: "improved",

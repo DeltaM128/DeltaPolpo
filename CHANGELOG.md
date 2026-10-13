@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-10-13 — Anywhere
+
+### Added
+- Agents and Polpo can now send messages to any chat, from wherever they are asked (web chat, private chat or a group).
+  - **`send_message`:** sends now to any Telegram group, topic or person the bots have met, by name or id.
+  - **`list_chats`:** lists those chats, their ids and the current time.
+  - **Bot fallback:** if the agent's own bot is not in that chat, another bot of the instance sends the message.
+  - **Transcripts:** a message to a group is saved in that group's transcript.
+- `schedule_check` can now:
+  - send to any chat (`to`, `topic`);
+  - run once (`at`, `in_minutes`) or on a cron with a timezone (`cron`, `timezone`, default the agent's identity timezone), besides `every_minutes`;
+  - send a fixed `message` without running the agent, for reminders.
+- `list_checks all=true` lists an agent's checks from every chat, and every check of the instance for Polpo. Polpo can cancel any check.
+- Agents' chat instructions and Polpo's prompt explain all of the above and include today's date, so "tomorrow at 9" resolves correctly.
+
+### Changed
+- Telegram `sendMarkdown` now reports whether Telegram accepted the message.
+
 ## [0.4.6] — 2026-10-12 — Polpo Knows
 
 ### Added

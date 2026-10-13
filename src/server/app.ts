@@ -444,12 +444,14 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
           await o.updateAgent(agentConfig.name, { voiceReplies: mode });
         }));
       }
-      // Recurring checks in this chat ("check every 2 minutes and tell us"): reports go where the turn came from
+      // Scheduled checks and reminders, and messages to any chat ("remind the team group every Monday at 9",
+      // "tell Marco it is out"): to any Telegram group, topic or person, by default where the turn came from
       if (!existingToolNames.has("schedule_check")) {
         const { createConversationCheckTools } = await import("../tools/conversation-check-tools.js");
         tools.push(...createConversationCheckTools(() => ({
           manager: o.getConversationCheckManager(), sessionId: context?.sessionId?.(), agent: agentConfig.name, origin: context?.origin,
-        })));
+          chats: o, ...(agentConfig.identity?.timezone ? { timezone: agentConfig.identity.timezone } : {}),
+        })).filter((tool) => !existingToolNames.has(tool.name)));
       }
       // Opt-in `render_widget` per agente, via allowedTools (es.
       // `["read","write","render_widget"]` in polpo.json). NON è nei
@@ -657,9 +659,11 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     }
     if (sessionLeases.isHeld(runSessionId)) return "deferred";
     const { CHECK_NOTHING_TO_REPORT } = await import("@polpo-ai/core");
-    const where = check.target?.conversation ? "a Telegram group" : check.target ? "a Telegram chat" : "a chat";
+    const kind = check.target?.conversation ? "the Telegram group" : check.target ? "the Telegram chat" : "the chat";
+    const where = check.target?.name ? `${kind} "${check.target.name}"` : kind;
+    const when = check.cron ? `cron "${check.cron}"${check.timezone ? ` (${check.timezone})` : ""}` : check.everyMinutes > 0 ? `every ${check.everyMinutes} min` : "once";
     const instruction = [
-      `[Recurring check ${check.id}: run ${check.runs + 1}, every ${check.everyMinutes} min, asked in ${where}]`,
+      `[Scheduled check ${check.id}: run ${check.runs + 1}, ${when}; your answer is posted in ${where}]`,
       check.prompt,
       "",
       `Do it now. If there is nothing worth telling the chat, answer exactly ${CHECK_NOTHING_TO_REPORT} and nothing else.`,

@@ -30,7 +30,7 @@ import { INTERNAL_CALL_HEADER, isInternalCall } from "../internal-call.js";
 import { type ContextCheckpointStore } from "../context-checkpoint.js";
 import { createSessionCompaction } from "../session-compactor.js";
 import type { TokenUsageRecord } from "@polpo-ai/core/token-usage";
-import type { ConversationCheckTarget } from "@polpo-ai/core/conversation-checks";
+import { todayLine, type ConversationCheckTarget } from "@polpo-ai/core/conversation-checks";
 
 const DEFAULT_MAX_TURNS = 200;
 
@@ -651,8 +651,11 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
         "the user asks to view a file, move to a Polpo page, or open an external URL.",
         "After one of those client-side tools completes, the UI sends a system acknowledgement;",
         "treat it as the tool result and do not repeat the same UI action for the same request.",
-        "To follow up later (\"check every 10 minutes\", \"tell us when it is done\"), use schedule_check when you have it;",
-        "never promise to notify later without it: nothing runs after this turn.",
+        "You can write to any chat, not only this one: send_message sends now to any Telegram group, topic or person",
+        "(list_chats lists them); schedule_check does it later, once (at, in_minutes) or on a schedule (every_minutes, cron),",
+        "to any of them (to), with a fixed message or instructions to run. Use them when asked to notify, remind or follow up;",
+        "never promise to notify later without schedule_check: nothing runs after this turn.",
+        todayLine(agentConfig.identity?.timezone),
         "When someone asks you to learn from your conversations (or to stop), or to answer with voice messages,",
         "change it yourself with set_learning or set_voice_replies.",
       ].join("\n");
