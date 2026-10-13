@@ -84,6 +84,22 @@ describe("playbook graph editing", () => {
     expect(updateGate(draft, "checkpoint", 1, { name: "review" }).error).toMatch(/already exists/);
   });
 
+  test("missionFromDraft adds the dependsOn that checkpoints and delays require", () => {
+    // Raccogli → Scrivi → [checkpoint review] → Traduci, drawn only through the checkpoint
+    let draft = draftFromMission({
+      tasks: [{ title: "Raccogli" }, { title: "Scrivi", dependsOn: ["Raccogli"] }, { title: "Traduci" }],
+      checkpoints: [{ name: "review", afterTasks: ["Scrivi"], blocksTasks: ["Traduci"] }],
+      delays: [{ name: "wait", afterTasks: ["Raccogli"], blocksTasks: ["Traduci"], duration: "PT1H" }],
+    });
+    const mission = missionFromDraft({}, draft) as { tasks: { title: string; dependsOn?: string[] }[] };
+    expect(mission.tasks[2].dependsOn).toEqual(["Scrivi", "Raccogli"]);
+    expect(mission.tasks[1].dependsOn).toEqual(["Raccogli"]);
+    // The draft itself is untouched
+    expect(draft.tasks[2].dependsOn).toBeUndefined();
+    draft = removeNodes(draft, [{ kind: "checkpoint", index: 0 }, { kind: "delay", index: 0 }]);
+    expect((missionFromDraft({}, draft) as typeof mission).tasks[2].dependsOn).toBeUndefined();
+  });
+
   test("missionFromDraft keeps other mission fields and drops empty lists", () => {
     const base = { name: "demo", team: [{ name: "dev" }], checkpoints: [], tasks: [] };
     const draft = removeNodes(baseDraft(), [CP(0)]);

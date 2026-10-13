@@ -14,6 +14,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_NAME = "DeltaPolpo";
 const SERVER_PORT = 3891;
 const AUTO_UPDATE = false;
+// Electron names the app after package.json ("ui"), so its data and logs went to %APPDATA%\ui,
+// the folder the original Polpo desktop app uses too. Give DeltaPolpo its own.
+app.setName(APP_NAME);
 const HEALTH_URL = `http://localhost:${SERVER_PORT}/api/v1/health`;
 const CONFIG_DIR = join(homedir(), ".deltapolpo-desktop");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");

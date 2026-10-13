@@ -916,6 +916,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     playbookStore: o.getPlaybookStore(),
     saveMission: (opts: any) => o.saveMission(opts),
     executeMission: (id: string) => o.executeMission(id),
+    deleteMission: (id: string) => o.deleteMission(id),
     onRun: (name: string, missionId: string, params: string[]) => o.emit("playbook:run", { name, missionId, params }),
   })));
   // Backward-compat: keep /templates as alias
@@ -923,6 +924,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     playbookStore: o.getPlaybookStore(),
     saveMission: (opts: any) => o.saveMission(opts),
     executeMission: (id: string) => o.executeMission(id),
+    deleteMission: (id: string) => o.deleteMission(id),
     onRun: (name: string, missionId: string, params: string[]) => o.emit("playbook:run", { name, missionId, params }),
   })));
 

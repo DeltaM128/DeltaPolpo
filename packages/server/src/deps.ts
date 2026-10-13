@@ -100,6 +100,8 @@ export interface PlaybookRouteDeps {
   playbookStore: PlaybookStore;
   saveMission: (...args: any[]) => Promise<any>;
   executeMission: (missionId: string) => Promise<any>;
+  /** Removes a mission that could not start (optional). */
+  deleteMission?: (missionId: string) => Promise<unknown>;
 }
 
 // ── Approval deps ────────────────────────────────────────────────────

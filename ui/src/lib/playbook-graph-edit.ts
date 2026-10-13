@@ -273,7 +273,23 @@ export function draftFromMission(mission: Record<string, unknown>): GraphDraft {
 
 /** Write the draft back into a mission body, keeping every other field (team, name, …) untouched. */
 export function missionFromDraft(base: Record<string, unknown>, draft: GraphDraft): Record<string, unknown> {
-  const mission: Record<string, unknown> = { ...base, tasks: draft.tasks.map(cleanTask) };
+  // A task blocked by a checkpoint or delay must also depend on the gate's afterTasks: missions
+  // refuse it otherwise ("is in blocksTasks but missing dependsOn"). Drawing task → gate → task
+  // only records the gate, so add those dependencies here.
+  const required = new Map<string, Set<string>>();
+  for (const gate of [...draft.checkpoints, ...draft.delays]) {
+    for (const blocked of gate.blocksTasks) {
+      const set = required.get(blocked) ?? new Set<string>();
+      for (const after of gate.afterTasks) if (after !== blocked) set.add(after);
+      required.set(blocked, set);
+    }
+  }
+  const tasks = draft.tasks.map((t) => {
+    const extra = required.get(t.title);
+    if (!extra || extra.size === 0) return t;
+    return { ...t, dependsOn: [...new Set([...(t.dependsOn ?? []), ...extra])] };
+  });
+  const mission: Record<string, unknown> = { ...base, tasks: tasks.map(cleanTask) };
   if (draft.checkpoints.length > 0) mission.checkpoints = draft.checkpoints;
   else delete mission.checkpoints;
   if (draft.delays.length > 0) mission.delays = draft.delays;
