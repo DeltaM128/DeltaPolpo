@@ -14,6 +14,7 @@ import {
   ListChecks,
   FileJson,
   Bot,
+  PencilRuler,
 } from "lucide-react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -24,6 +25,7 @@ import type {
 } from "@polpo-ai/react";
 import { toast } from "sonner";
 import { JsonBlock } from "@/components/json-block";
+import { PlaybookGraphEditor } from "@/components/playbook-graph-editor";
 import {
   MissionGraphInner,
   TaskStepCard,
@@ -100,6 +102,7 @@ export function PlaybookDetailPage() {
 
   const taskDefs = parsed?.tasks ?? [];
   const checkpoints = parsed?.checkpoints;
+  const delays = parsed?.delays;
   const params = playbook?.parameters ?? [];
   const requiredParams = params.filter((p) => p.required);
 
@@ -165,6 +168,10 @@ export function PlaybookDetailPage() {
             <Workflow className="h-3.5 w-3.5" />
             Graph
           </TabsTrigger>
+          <TabsTrigger value="editor" className="gap-1.5 text-xs">
+            <PencilRuler className="h-3.5 w-3.5" />
+            Editor
+          </TabsTrigger>
           <TabsTrigger value="tasks" className="gap-1.5 text-xs">
             <ListChecks className="h-3.5 w-3.5" />
             Tasks
@@ -195,9 +202,23 @@ export function PlaybookDetailPage() {
                   taskDefs={taskDefs}
                   findLiveTask={findLiveTask}
                   checkpoints={checkpoints}
+                  delays={delays}
                 />
               </ReactFlowProvider>
             </div>
+          </div>
+        </TabsContent>
+
+        {/* Editor tab */}
+        <TabsContent value="editor" className="flex-1 min-h-0 mt-0">
+          <div className="h-full rounded-lg border border-border/40 overflow-hidden">
+            <ReactFlowProvider>
+              <PlaybookGraphEditor
+                key={playbook.name}
+                playbook={playbook}
+                onSaved={(saved) => setLoaded({ name: saved.name, playbook: saved })}
+              />
+            </ReactFlowProvider>
           </div>
         </TabsContent>
 

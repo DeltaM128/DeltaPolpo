@@ -1009,6 +1009,11 @@ export class PolpoClient {
     return this.post<PlaybookRunResult>(`/playbooks/${encodeURIComponent(name)}/run`, { params });
   }
 
+  /** Create or overwrite a playbook. The server validates the definition before writing it. */
+  savePlaybook(definition: PlaybookDefinition): Promise<{ name: string; path: string }> {
+    return this.post<{ name: string; path: string }>("/playbooks", definition);
+  }
+
   // Backward-compat aliases
   /** @deprecated Use getPlaybooks instead. */
   getTemplates(): Promise<PlaybookInfo[]> { return this.getPlaybooks(); }
