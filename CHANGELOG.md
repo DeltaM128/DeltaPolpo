@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **Desktop app:** no task ever ran. The compiled server started task runners with a script path that does not exist inside the binary ("too many arguments. Expected 0 arguments but got 3"); it now starts them with a hidden `__runner` command.
-- **Desktop app:** "Login with subscription" failed for every provider ("Cannot find module './anthropic.js'"). The OAuth flows are now registered statically, and provider login pages open in the default browser instead of a bare Electron window.
-- After a setup completed from the dashboard, tasks stayed pending until the server was restarted: the supervisor loop never started.
-- After a setup completed from the dashboard, the dashboard received no live events until the server was restarted: the `/events` route kept the event bridge that setup had replaced.
-
 ## [0.4.8] — 2026-10-13 — Drive
 
 ### Added
@@ -37,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **UI:** a **Goals** tab in the agent page with purpose, goals, autonomy, day start, self-portrait (editable), the goals and steps tree (mark done or drop), planned and proposed intentions (approve or reject), and the reflections journal.
   - **API:** `PATCH /drive/:agent/plan/:id`.
 - Scheduled checks gained a `proposed` state (waiting for a yes) and a `why`.
+
+### Fixed
+- **Desktop app:** no task ever ran. The compiled server started task runners with a script path that does not exist inside the binary ("too many arguments. Expected 0 arguments but got 3"); it now starts them with a hidden `__runner` command.
+- **Desktop app:** "Login with subscription" failed for every provider ("Cannot find module './anthropic.js'"). The OAuth flows are now registered statically, and provider login pages open in the default browser instead of a bare Electron window.
+- After a setup completed from the dashboard, tasks stayed pending until the server was restarted: the supervisor loop never started.
+- After a setup completed from the dashboard, the dashboard received no live events until the server was restarted: the `/events` route kept the event bridge that setup had replaced.
+- Thanks to @DeltaM128 for finding and fixing these four (#128).
 
 ## [0.4.7] — 2026-10-13 — Anywhere
 
