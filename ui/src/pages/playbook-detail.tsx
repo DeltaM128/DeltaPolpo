@@ -15,7 +15,9 @@ import {
   FileJson,
   Bot,
   PencilRuler,
+  Play,
 } from "lucide-react";
+import { RunPlaybookDialog } from "@/pages/playbooks";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { usePlaybooks } from "@polpo-ai/react";
@@ -69,7 +71,20 @@ function ParamCard({ param }: { param: PlaybookParameter }) {
 export function PlaybookDetailPage() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
-  const { getPlaybook } = usePlaybooks();
+  const { getPlaybook, runPlaybook } = usePlaybooks();
+  const [runOpen, setRunOpen] = useState(false);
+
+  // Runs the saved playbook: it becomes a mission, opened right away.
+  const handleRun = async (playbookName: string, params: Record<string, string | number | boolean>) => {
+    try {
+      const result = await runPlaybook(playbookName, params);
+      toast.success(`Playbook "${playbookName}" started — ${result.tasks} task${result.tasks !== 1 ? "s" : ""} created`);
+      navigate(`/missions/${result.mission.id}`);
+    } catch (e) {
+      toast.error(`Run failed: ${(e as Error).message}`);
+      throw e;
+    }
+  };
   // ?tab=editor opens the graph editor directly (e.g. right after "New playbook").
   const [searchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") ?? "graph";
@@ -161,6 +176,23 @@ export function PlaybookDetailPage() {
           <p className="text-xs text-muted-foreground mt-0.5">{playbook.description}</p>
         </div>
 
+        <Button
+          size="sm"
+          className="shrink-0 gap-1.5"
+          disabled={taskDefs.length === 0}
+          title={taskDefs.length === 0 ? "Add at least one task in the Editor and save" : "Run the saved playbook"}
+          onClick={() => setRunOpen(true)}
+        >
+          <Play className="h-3.5 w-3.5" /> Run
+        </Button>
+        {runOpen && (
+          <RunPlaybookDialog
+            playbook={{ name: playbook.name, description: playbook.description, parameters: params }}
+            open={true}
+            onOpenChange={(open) => { if (!open) setRunOpen(false); }}
+            onRun={handleRun}
+          />
+        )}
 
       </div>
 
