@@ -108,8 +108,10 @@ The task's runner process executes the pipeline (`src/adapters/pipeline.ts`, `sr
 - `when` on any step: the step is skipped when the guard is false.
 - `parallel`: branches run concurrently. `join: "all"` (default) needs every branch to succeed; `"any"` succeeds on the first success; a number `n` needs `n` successes. Once the join is decided, the remaining branches are stopped.
 - `switch`: the first case whose `when` is true runs; otherwise `default`, if any.
-- `human`: creates an approval request (Approvals page, `/approve` in channels, `POST /api/v1/approvals/{id}/approve|reject`) and waits. Approving continues; rejecting fails the pipeline with the rejection note. Each channel in `notify` gets a direct notification. Resolving these requests does not change the task's status — the pipeline does. Human steps need the local server (the runner reaches it over the notification socket).
+- `human`: creates an approval request (Approvals page, `/approve` in channels, `POST /api/v1/approvals/{id}/approve|reject`) and waits. Approving continues; rejecting fails the pipeline with the rejection note. Each channel in `notify` gets a direct notification. Resolving these requests does not change the task's status — the pipeline does. Human steps need the local server (the runner reaches it over the notification socket). A request nobody waits for anymore — the run was cancelled, a `parallel` join was already decided, or the task stopped — is rejected automatically by `system`.
 - `pipeline.mode: "parallel"` runs the top-level steps as one `parallel` step with `join: "all"`.
+
+**Live state.** The run exposes its state in the run activity (`activity.pipeline`): each step by path (`steps.1.switch.cases.0.steps.0`) with its status (running, waiting, done, failed, skipped, cancelled), attempt, retry feedback and error, plus the shared context. The task page shows it in the Pipeline tab, live while running and from the run log afterwards.
 
 **Result.** The task succeeds when the pipeline completes; its usual assessment (expectations, reviews, retries) then applies. A failed pipeline fails the run with the failing step's reason, and Polpo's normal retry policy takes over.
 
