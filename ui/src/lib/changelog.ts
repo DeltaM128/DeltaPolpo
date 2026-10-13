@@ -27,6 +27,27 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-13-agent-drive",
+    date: "2026-10-13",
+    kind: "new",
+    title: "Agenti con uno scopo",
+    summary: "Dai a un agente uno scopo: si muove da solo, si ricorda delle persone e sceglie quando farsi sentire.",
+    body: [
+      "Nella scheda **Goals** di un agente puoi dargli uno **scopo** e degli **obiettivi**. Per esempio: \"essere l'health coach di Alessio\".",
+      "",
+      "- **Ci pensa da solo**: ripassa le sue chat e i gruppi (anche quello che legge senza essere chiamato) e decide se scrivere, a chi, o cosa programmare.",
+      "- **Si ricorda delle persone**: se senti \"oggi è il compleanno di Grazia\", il giorno dopo le fa gli auguri.",
+      "- **Ha una personalità sua** e la porta avanti: la trovi in *Who it is*, e puoi correggerla.",
+      "- **Si dà degli obiettivi a cascata**: dallo scopo a 6–12 mesi, trimestre, mese, settimana e giorno, misurabili e con i passi da fare. Ogni mattina pianifica la giornata, e a inizio settimana, mese e trimestre fa il punto.",
+      "- **Cresce**: si chiede cosa potrebbe fare meglio e cosa gli manca, lo studia e si scrive le sue skill.",
+      "- **Autonomia a scelta**: propone e aspetta il tuo sì, agisce da solo sulle cose leggere, oppure decide in tutto.",
+      "",
+      "Quello che ha in programma e le sue riflessioni sono sempre visibili, e puoi approvare o annullare.",
+    ].join("\n"),
+    highlight: true,
+    cta: { label: "Vai agli agenti", to: "/agents" },
+  },
+  {
     id: "2026-10-13-send-anywhere",
     date: "2026-10-13",
     kind: "new",

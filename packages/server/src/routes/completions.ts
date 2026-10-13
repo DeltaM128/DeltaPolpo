@@ -468,6 +468,8 @@ export interface CompletionRouteDeps {
   resolveAgentModel: (agentConfig: any, settingsReasoning?: string) => Promise<{ model: any; streamOpts: any }>;
   /** Build agent system prompt for conversational mode. */
   buildAgentPrompt: (agentConfig: any) => string | Promise<string>;
+  /** What else an agent's chats know about it (its purpose and self-portrait, when it has a drive). */
+  agentChatContext?: (agentConfig: any) => Promise<string | undefined>;
   /** Create tools + executor for the agent. Return empty arrays for chat-only. */
   resolveAgentTools: (agentConfig: any, context?: { sessionId: () => string | undefined; origin?: ConversationCheckTarget }) => Promise<{
     tools: any[];
@@ -663,7 +665,8 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
       // Keep the chat-mode rules last: buildAgentPrompt is shared with
       // autonomous task execution and intentionally tells runners not to ask
       // questions. In a direct chat, this later block overrides that rule.
-      const basePrompt = `${agentSystemPrompt}\n\n${conversationalPreamble}`;
+      const chatContext = await deps.agentChatContext?.(agentConfig).catch(() => undefined);
+      const basePrompt = `${agentSystemPrompt}\n\n${conversationalPreamble}${chatContext ? `\n\n${chatContext}` : ""}`;
       fullSystemPrompt = extraSystemParts.length > 0
         ? `${basePrompt}\n\n## Additional context from caller\n\n${extraSystemParts.join("\n\n")}`
         : basePrompt;
