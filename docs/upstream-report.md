@@ -3,8 +3,8 @@
 Hi! I built **DeltaPolpo**, a fork of Polpo `v0.4.6` focused on visual workflows, local (offline) models and a Windows desktop installer. While testing it I found and fixed several bugs that are also in Polpo itself. This is the complete list, with the cause, the fix, the files and the commit for each, so you can take what is useful.
 
 - **Base:** tag `v0.4.6`, branch `feat/graph-editor`
-- **Size:** 18 commits, 75 files, +7,064 / −581 lines
-- **Repository:** _link to the public fork_
+- **Size:** 19 commits, 76 files, +7,323 / −581 lines (including this report)
+- **Repository:** https://github.com/DeltaM128/DeltaPolpo/tree/feat/graph-editor (all changes: https://github.com/DeltaM128/DeltaPolpo/compare/v0.4.6...feat/graph-editor)
 - **License:** MIT, unchanged; Polpo is credited in the README and in `DELTAPOLPO.md`. DeltaPolpo is an independent fork, not affiliated with the Polpo project.
 
 Contents: [1. Bug fixes](#1-bug-fixes-that-apply-to-polpo) · [2. New features](#2-new-features) · [3. Behaviour changes to review](#3-behaviour-changes-to-review) · [4. Fork-only changes](#4-fork-only-changes-not-proposed) · [5. Found but not fixed](#5-found-but-not-fixed) · [6. Testing](#6-testing) · [7. Suggested pull requests](#7-suggested-pull-requests)
