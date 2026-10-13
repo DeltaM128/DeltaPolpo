@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
 import { AuthStep } from "@/components/shared/provider-auth";
 import type { Provider } from "@/components/shared/provider-auth";
 import { ModelPicker } from "@/components/shared/model-picker";
-import { LocalModelStep, type LocalProviderChoice } from "@/components/setup/local-model-step";
+import { LocalModelStep, NoToolsBadge, type LocalProviderChoice } from "@/components/setup/local-model-step";
 
 // ── Types ──
 
@@ -516,6 +516,11 @@ function ModelStep({
             Models served by {localProvider.label}. This model powers the orchestrator and your first agent.
             Pick one that supports tool calling.
           </p>
+          {localProvider.models.some((m) => m.tools === false) && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+              Models marked “no tools” can chat but cannot run agent tasks.
+            </p>
+          )}
         </div>
         <div className="max-h-64 space-y-1.5 overflow-y-auto">
           {localProvider.models.map((m) => {
@@ -529,6 +534,7 @@ function ModelStep({
               >
                 <Cpu className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="truncate font-mono text-sm">{m.id}</span>
+                {m.tools === false && <NoToolsBadge />}
                 {m.contextWindow && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{Math.round(m.contextWindow / 1000)}k context</span>}
                 {selected === spec && <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />}
               </button>

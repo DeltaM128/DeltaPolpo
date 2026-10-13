@@ -48,6 +48,28 @@ describe("local model servers for setup", () => {
     expect(found.result.models.map((m) => m.id)).toEqual(["gemma4:e4b", "qwen3:4b-instruct"]);
   });
 
+  it("marks Ollama models without tool calling and lists the capable ones first", async () => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.pathname === "/api/tags") return json({ models: [{ name: "a-chat-only" }, { name: "b-agent" }, { name: "c-unknown" }] });
+      if (url.pathname === "/api/show") {
+        const model = JSON.parse(String(init?.body)).model as string;
+        if (model === "a-chat-only") return json({ capabilities: ["completion"] });
+        if (model === "b-agent") return json({ capabilities: ["completion", "tools"] });
+        return new Response("not found", { status: 404 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    const found = await discoverLocalModels({ preset: "ollama" }, fetchImpl);
+    if (!found.ok) throw new Error(found.error);
+    expect(found.result.models.map((m) => [m.id, (m as { tools?: boolean }).tools])).toEqual([
+      ["b-agent", true],
+      ["c-unknown", undefined],
+      ["a-chat-only", false],
+    ]);
+  });
+
   it("discovers OpenAI-compatible servers through /v1/models and reports an empty server", async () => {
     const lm = await discoverLocalModels(
       { preset: "lm-studio" },

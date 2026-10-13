@@ -17,6 +17,8 @@ export interface LocalModel {
   maxTokens?: number;
   reasoning?: boolean;
   input?: ("text" | "image")[];
+  /** Ollama only: whether the model supports tool calling (needed to run tasks). */
+  tools?: boolean;
 }
 
 /** What the wizard sends to /config/initialize as `localProvider`. */
@@ -184,6 +186,7 @@ export function LocalModelStep({
               <div key={m.id} className="flex items-center gap-2 text-xs">
                 <Cpu className="h-3 w-3 shrink-0 text-muted-foreground" />
                 <span className="truncate font-mono">{m.id}</span>
+                {m.tools === false && <NoToolsBadge />}
                 {m.contextWindow && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{Math.round(m.contextWindow / 1000)}k ctx</span>}
               </div>
             ))}
@@ -195,6 +198,18 @@ export function LocalModelStep({
         </div>
       )}
     </div>
+  );
+}
+
+/** Marks a model that cannot call tools, so cannot act in tasks (write files, run commands). */
+export function NoToolsBadge() {
+  return (
+    <span
+      className="shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-1 text-[9px] font-medium text-amber-600 dark:text-amber-400"
+      title="This model does not support tool calling: it can chat, but agents using it cannot write files or run commands, so their tasks fail."
+    >
+      no tools
+    </span>
   );
 }
 

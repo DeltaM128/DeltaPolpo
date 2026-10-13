@@ -65,6 +65,30 @@ export function buildLocalProvider(input: {
   return { ok: true, id: localProviderId(presetId), config: validated.config };
 }
 
+/**
+ * Ollama reports each model's capabilities (/api/show). Agents act through tools (files,
+ * commands), so a model without "tools" cannot run tasks: tell the wizard which ones.
+ * Other servers do not report it; their models are left unmarked.
+ */
+async function ollamaToolSupport(baseUrl: string, ids: string[], fetchImpl: typeof fetch): Promise<Map<string, boolean>> {
+  const root = baseUrl.replace(/\/v1\/?$/, "");
+  const out = new Map<string, boolean>();
+  await Promise.all(ids.slice(0, 50).map(async (id) => {
+    try {
+      const res = await fetchImpl(`${root}/api/show`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: id }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return;
+      const info = await res.json() as { capabilities?: unknown };
+      if (Array.isArray(info.capabilities)) out.set(id, info.capabilities.includes("tools"));
+    } catch { /* unknown: leave unmarked */ }
+  }));
+  return out;
+}
+
 /** Ask the local server which models it serves. */
 export async function discoverLocalModels(
   input: { preset: string; baseUrl?: string },
@@ -80,6 +104,13 @@ export async function discoverLocalModels(
       kind: preset.discovery === "none" ? "openai" : preset.discovery,
       fetchImpl,
     });
+    if (input.preset === "ollama" && result.models.length > 0) {
+      const tools = await ollamaToolSupport(built.config.baseUrl!, result.models.map((m) => m.id), fetchImpl ?? fetch);
+      result.models = result.models
+        .map((m) => (tools.has(m.id) ? { ...m, tools: tools.get(m.id) } : m))
+        // Models that can run tasks first, so the wizard's default is one of them.
+        .sort((a, b) => Number((b as { tools?: boolean }).tools !== false) - Number((a as { tools?: boolean }).tools !== false));
+    }
     return { ok: true, id: built.id, baseUrl: built.config.baseUrl!, result };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
