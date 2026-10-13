@@ -27,6 +27,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-13-desktop-tasks",
+    date: "2026-10-13",
+    kind: "fixed",
+    title: "App desktop: i task partono",
+    summary: "Nell'app desktop i task ora partono, e il login con abbonamento ai provider funziona.",
+    body: [
+      "- **I task partono**: nell'app desktop nessun task riusciva ad avviarsi; ora funzionano come sul server.",
+      "- **Login con abbonamento**: l'accesso ai provider si apre nel browser di sistema e va a buon fine.",
+      "- **Dopo il primo setup** non serve più riavviare: i task partono e la dashboard si aggiorna subito.",
+      "",
+      "Grazie a **DeltaM128**, che ha trovato e corretto questi problemi.",
+    ].join("\n"),
+  },
+  {
     id: "2026-10-13-agent-drive",
     date: "2026-10-13",
     kind: "new",
