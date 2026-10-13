@@ -5164,6 +5164,39 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "drive": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "purpose": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "goals": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "maxItems": 30
+                      },
+                      "autonomy": {
+                        "type": "string",
+                        "enum": [
+                          "propose",
+                          "balanced",
+                          "act"
+                        ]
+                      },
+                      "reflectEveryMinutes": {
+                        "type": "integer",
+                        "minimum": 15
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -5477,6 +5510,39 @@
                       },
                       "skills": {
                         "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "drive": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "purpose": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "goals": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "maxItems": 30
+                      },
+                      "autonomy": {
+                        "type": "string",
+                        "enum": [
+                          "propose",
+                          "balanced",
+                          "act"
+                        ]
+                      },
+                      "reflectEveryMinutes": {
+                        "type": "integer",
+                        "minimum": 15
                       }
                     },
                     "additionalProperties": false

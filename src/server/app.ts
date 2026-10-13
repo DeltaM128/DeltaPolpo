@@ -61,6 +61,7 @@ import { emailRoutes } from "./routes/email.js";
 import { codingRoutes } from "./routes/coding.js";
 import { roomRoutes } from "./routes/rooms.js";
 import { learningRoutes } from "./routes/learning.js";
+import { driveRoutes } from "./routes/drive.js";
 import { syncRoutes } from "./routes/sync.js";
 import { browserDashboardRoutes } from "./routes/browser-dashboard.js";
 import { appPreviewRoutes } from "./routes/app-preview.js";
@@ -286,6 +287,12 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       const r = agentConfig.reasoning ?? reasoning;
       return { model: m, streamOpts: buildStreamOpts(undefined, r, m.maxTokens) };
     },
+    agentChatContext: async (agentConfig: any) => {
+      const drive = o.getDriveManager();
+      if (!agentConfig.drive?.enabled || !drive) return undefined;
+      const { drivePrompt } = await import("../core/drive.js");
+      return drivePrompt(agentConfig, drive.getSelf(agentConfig.name), await drive.intentions(agentConfig.name));
+    },
     buildAgentPrompt: async (agentConfig: any) => {
       // Pull the agent's mailboxes from vault so the prompt enumerates
       // them (drives the `account` selector in email_* tools). Failures
@@ -437,6 +444,12 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       if (!existingToolNames.has("set_learning")) {
         tools.push(...(await o.learningTools(agentConfig)).filter((tool) => !existingToolNames.has(tool.name)));
       }
+      // A drive: the agent keeps its self-portrait (who it is, its people, its open threads)
+      const drive = o.getDriveManager();
+      if (agentConfig.drive?.enabled && drive && !existingToolNames.has("update_self")) {
+        const { createDriveTools } = await import("../tools/drive-tools.js");
+        tools.push(...createDriveTools(agentConfig.name, drive));
+      }
       // Voice replies on Telegram: off by default, the agent knows its mode and changes it when asked
       if (!existingToolNames.has("set_voice_replies")) {
         const { createVoiceReplyTool } = await import("../tools/voice-reply-tools.js");
@@ -451,6 +464,13 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
         tools.push(...createConversationCheckTools(() => ({
           manager: o.getConversationCheckManager(), sessionId: context?.sessionId?.(), agent: agentConfig.name, origin: context?.origin,
           chats: o, ...(agentConfig.identity?.timezone ? { timezone: agentConfig.identity.timezone } : {}),
+          ...(agentConfig.drive?.enabled ? {
+            autonomy: agentConfig.drive.autonomy ?? "balanced",
+            reflecting: () => !!drive?.isReflecting(agentConfig.name, context?.sessionId?.()),
+            noteAction: (action: string) => {
+              if (drive?.isReflecting(agentConfig.name, context?.sessionId?.())) drive.noteAction(agentConfig.name, action);
+            },
+          } : {}),
         })).filter((tool) => !existingToolNames.has(tool.name)));
       }
       // Opt-in `render_widget` per agente, via allowedTools (es.
@@ -647,6 +667,36 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     return { text: typeof content === "string" ? content : "" };
   });
 
+  // A reflection is a turn of the agent's reflection session (its own model, tools and purpose). The
+  // journal carries the continuity, so only the last turns of that session are sent back.
+  o?.setReflectionRunner(async ({ agent, sessionId, prompt, signal }) => {
+    if (sessionLeases.isHeld(sessionId)) return "deferred";
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-session-id": sessionId,
+      ...internalCallHeaders(),
+    };
+    if (opts?.apiKeys?.[0]) headers.authorization = `Bearer ${opts.apiKeys[0]}`;
+    const history = (await o.getSessionStore()?.getMessages(sessionId) ?? [])
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
+      .slice(-6);
+    const response = await completionApp.request(new Request("http://polpo.internal/", {
+      method: "POST",
+      headers,
+      signal,
+      body: JSON.stringify({
+        stream: false,
+        agent: agent.name,
+        messages: [...history.map((m) => ({ role: m.role, content: m.content })), { role: "user", content: prompt }],
+      }),
+    }));
+    if (response.status === 409) return "deferred";
+    const payload = await response.json().catch(() => null) as any;
+    if (!response.ok) throw new Error(payload?.error?.message ?? payload?.error ?? `Reflection failed (${response.status})`);
+    const content = payload?.choices?.[0]?.message?.content;
+    return { text: typeof content === "string" ? content : "" };
+  });
+
   // A recurring check runs as a turn of its own session (it remembers its earlier runs and keeps
   // the "nothing to report" answers out of the chat it was asked in).
   o?.setConversationCheckRunner(async (check, signal) => {
@@ -664,6 +714,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     const when = check.cron ? `cron "${check.cron}"${check.timezone ? ` (${check.timezone})` : ""}` : check.everyMinutes > 0 ? `every ${check.everyMinutes} min` : "once";
     const instruction = [
       `[Scheduled check ${check.id}: run ${check.runs + 1}, ${when}; your answer is posted in ${where}]`,
+      ...(check.why ? [`You planned this yourself, because: ${check.why}`] : []),
       check.prompt,
       "",
       `Do it now. If there is nothing worth telling the chat, answer exactly ${CHECK_NOTHING_TO_REPORT} and nothing else.`,
@@ -873,6 +924,12 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
 
   authed.route("/learning", learningRoutes(() => ({
     manager: o.getLearningManager(),
+    getAgents: () => o.getAgents(),
+  })));
+
+  authed.route("/drive", driveRoutes(() => ({
+    manager: o.getDriveManager(),
+    checks: o.getConversationCheckManager(),
     getAgents: () => o.getAgents(),
   })));
 

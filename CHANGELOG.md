@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] — 2026-10-13 — Drive
+
+### Added
+- **Agent drive** (`drive` in the agent config, off by default): an agent pursues a purpose and goals on its own initiative, among people, instead of only answering when called or scheduled.
+  - **Reflection:** it reflects on its private chats and on the groups it is in, including messages it only read. It reflects after `reflectEveryMinutes` (default 120) when something new happened, and once a day in any case. It decides by itself whether to write now (`send_message`), plan something for later, or do nothing, weighing how much it serves its purpose, how serious and how urgent it is.
+  - **Intentions:** while it talks or reflects, it plans follow-ups on its own, such as wishes on someone's birthday or a check-in after an event. An intention is a scheduled check with a `why`.
+  - **Autonomy:** with `propose`, its own initiatives wait for a yes; with `balanced` (the default), it acts on low-stakes things and asks first otherwise; with `act`, it uses its own judgment. Proposed checks are approved with `confirm_check`, by Polpo, or in the UI.
+  - **Self-portrait:** it keeps a self-portrait covering its personality, the people who matter and its open threads, updated with `update_self` and part of every conversation. It starts from the identity's personality, or writes one coherent with its purpose.
+  - **Human customs:** its prompt covers birthdays and holidays, tact in groups vs private, choosing the moment, not nagging, and stopping when asked.
+  - **Polpo:** `add_agent` / `update_agent` take `drive`; `get_agent_drive` shows the purpose, self-portrait, intentions and reflections; `reflect_agent` makes the agent reflect now.
+  - **API:** `GET /drive/:agent`, `PUT /drive/:agent/self`, `POST /drive/:agent/reflect`, `POST /drive/:agent/intentions/:id/confirm|cancel`; the event is `agent:reflected`.
+  - **UI:** a **Goals** tab in the agent page with purpose, goals, autonomy, self-portrait (editable), planned and proposed intentions (approve or reject), and the reflections journal.
+- Scheduled checks gained a `proposed` state (waiting for a yes) and a `why`.
+
 ## [0.4.7] — 2026-10-13 — Anywhere
 
 ### Added
