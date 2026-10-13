@@ -138,8 +138,16 @@ export class ConversationCheckManager {
   async cancel(id: string): Promise<ConversationCheck | undefined> {
     this.running.get(id)?.abort();
     const check = await this.store.getCheck(id);
-    if (!check || check.state !== "active") return check;
+    if (!check || (check.state !== "active" && check.state !== "proposed")) return check;
     return this.store.updateCheck(id, { state: "cancelled" });
+  }
+
+  /** Say yes to a proposed check: it runs from now on (at its time, or now when that has passed). */
+  async confirm(id: string): Promise<ConversationCheck | undefined> {
+    const check = await this.store.getCheck(id);
+    if (!check || check.state !== "proposed") return check;
+    const now = new Date().toISOString();
+    return this.store.updateCheck(id, { state: "active", nextRunAt: check.nextRunAt > now ? check.nextRunAt : now });
   }
 
   /** The check's next state after a run at `at` (its next cron time, when it follows one). */

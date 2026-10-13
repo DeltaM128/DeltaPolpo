@@ -13,6 +13,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - After a setup completed from the dashboard, tasks stayed pending until the server was restarted: the supervisor loop never started.
 - After a setup completed from the dashboard, the dashboard received no live events until the server was restarted: the `/events` route kept the event bridge that setup had replaced.
 
+## [0.4.8] — 2026-10-13 — Drive
+
+### Added
+- **Agent drive** (`drive` in the agent config, off by default): an agent pursues a purpose and goals on its own initiative, among people, instead of only answering when called or scheduled.
+  - **Reflection:** it reflects on its private chats and on the groups it is in, including messages it only read. It reflects after `reflectEveryMinutes` (default 120) when something new happened, and once a day in any case. It decides by itself whether to write now (`send_message`), plan something for later, or do nothing, weighing how much it serves its purpose, how serious and how urgent it is.
+  - **Intentions:** while it talks or reflects, it plans follow-ups on its own, such as wishes on someone's birthday or a check-in after an event. An intention is a scheduled check with a `why`.
+  - **Autonomy:** with `propose`, its own initiatives wait for a yes; with `balanced` (the default), it acts on low-stakes things and asks first otherwise; with `act`, it uses its own judgment. Proposed checks are approved with `confirm_check`, by Polpo, or in the UI.
+  - **Self-portrait:** it keeps a self-portrait covering its personality, the people who matter and its open threads, updated with `update_self` and part of every conversation. It starts from the identity's personality, or writes one coherent with its purpose.
+  - **Human customs:** its prompt covers birthdays and holidays, tact in groups vs private, choosing the moment, not nagging, and stopping when asked.
+  - **Goals in a cascade:** it breaks its purpose down into long-term (6–12 months), quarter, month, week and day goals, each under the one it serves, with a measure, progress, an owner (its own, or a person's or group's it supports) and the steps to do. It keeps them in its plan with `add_plan_item` / `update_plan_item`, and the plan is part of every chat.
+  - **Review rhythm:** when its day starts (`dayStartsAt`, default 07:30 in its timezone) it plans the day. On a new week, month or quarter it also does that review: score, adjust, set the next goals, and check in with the people it supports.
+  - **Method:** the guidance follows goal-setting research:
+    - specific, measurable goals, at most 3–5 per horizon;
+    - if-then plans for key actions;
+    - important before urgent, with timeboxed work sessions;
+    - progress monitoring;
+    - autonomy-supportive help for people's goals (ask, offer options, never shame);
+    - for groups, shared goals with regular check-ins.
+  - **Growing:** it asks what it could do more or better and what it lacks, studies it with its tools, and writes its own skills. With a drive it always has its own-skill tools (`list_my_skills`, `create_my_skill`, `update_my_skill`), which can be undone in the Learning tab.
+  - **Polpo:** `add_agent` / `update_agent` take `drive`; `get_agent_drive` shows the purpose, self-portrait, intentions and reflections; `reflect_agent` makes the agent reflect now.
+  - **API:** `GET /drive/:agent`, `PUT /drive/:agent/self`, `POST /drive/:agent/reflect`, `POST /drive/:agent/intentions/:id/confirm|cancel`; the event is `agent:reflected`.
+  - **UI:** a **Goals** tab in the agent page with purpose, goals, autonomy, day start, self-portrait (editable), the goals and steps tree (mark done or drop), planned and proposed intentions (approve or reject), and the reflections journal.
+  - **API:** `PATCH /drive/:agent/plan/:id`.
+- Scheduled checks gained a `proposed` state (waiting for a yes) and a `why`.
+
 ## [0.4.7] — 2026-10-13 — Anywhere
 
 ### Added
