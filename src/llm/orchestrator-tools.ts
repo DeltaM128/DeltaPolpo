@@ -62,6 +62,7 @@ import { VOICE_REPLY_MODES, isVoiceReplyMode } from "../tools/voice-reply-tools.
 import {
   CANCEL_CHECK_DESCRIPTION, CancelCheckSchema, LIST_CHECKS_DESCRIPTION, ListChecksSchema, SCHEDULE_CHECK_DESCRIPTION, ScheduleCheckSchema,
   execCancelCheck, execListChecks, execScheduleCheck,
+  LIST_CHATS_DESCRIPTION, ListChatsSchema, SEND_MESSAGE_DESCRIPTION, SendMessageSchema, execListChats, execSendMessage,
 } from "../tools/conversation-check-tools.js";
 
 export interface OrchestratorToolProgress {
@@ -1146,6 +1147,8 @@ async function execSetVoiceReplies(polpo: Orchestrator, args: Record<string, unk
 const scheduleCheckTool: Tool = { name: "schedule_check", description: SCHEDULE_CHECK_DESCRIPTION, parameters: ScheduleCheckSchema };
 const listChecksTool: Tool = { name: "list_checks", description: LIST_CHECKS_DESCRIPTION, parameters: ListChecksSchema };
 const cancelCheckTool: Tool = { name: "cancel_check", description: CANCEL_CHECK_DESCRIPTION, parameters: CancelCheckSchema };
+const listChatsTool: Tool = { name: "list_chats", description: LIST_CHATS_DESCRIPTION, parameters: ListChatsSchema };
+const sendMessageTool: Tool = { name: "send_message", description: SEND_MESSAGE_DESCRIPTION, parameters: SendMessageSchema };
 
 // ═══════════════════════════════════════════════════════
 //  MODEL CATALOG
@@ -2082,7 +2085,7 @@ export const READ_TOOLS = new Set([
   "list_agents", "get_team", "get_memory", "get_config",
   "list_approvals", "list_checkpoints", "list_delays", "get_logs",
   // Read-only listing tools
-  "list_schedules", "list_checks", "list_models", "get_agent_learning", "list_notification_rules", "list_watchers", "wait_for_task",
+  "list_schedules", "list_checks", "list_chats", "list_models", "get_agent_learning", "list_notification_rules", "list_watchers", "wait_for_task",
   // Skills (read-only)
   "list_orchestrator_skills", "list_agent_skills", "search_skills", "get_skill",
   // Playbooks (read-only)
@@ -2122,7 +2125,7 @@ export const WRITE_TOOLS = new Set([
   // Agent learning
   "review_agent_learning", "revert_agent_learning",
   // Conversation checks
-  "schedule_check", "cancel_check",
+  "schedule_check", "cancel_check", "send_message",
   // Notification rules
   "add_notification_rule", "remove_notification_rule", "send_notification",
   // Task watchers
@@ -2249,7 +2252,7 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
   // Voice replies
   setVoiceRepliesTool,
   // Conversation checks
-  scheduleCheckTool, listChecksTool, cancelCheckTool,
+  scheduleCheckTool, listChecksTool, cancelCheckTool, listChatsTool, sendMessageTool,
   // Model catalog
   listModelsTool,
   // Agent learning
@@ -2400,6 +2403,8 @@ const TOOL_LABELS: Record<string, string> = {
   schedule_check: "Schedule Check",
   list_checks: "List Checks",
   cancel_check: "Cancel Check",
+  list_chats: "List Chats",
+  send_message: "Send Message",
   list_models: "List Models",
   get_agent_learning: "Agent Learning",
   review_agent_learning: "Review Agent Learning",
@@ -2662,9 +2667,11 @@ export async function executeOrchestratorTool(
       case "revert_agent_learning": return execAgentLearning(polpo, toolName, args);
 
       // ── Conversation checks (this chat) ──
-      case "schedule_check": return execScheduleCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId, origin: context.origin });
-      case "list_checks":    return execListChecks({ manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
+      case "schedule_check": return execScheduleCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId, origin: context.origin, chats: polpo });
+      case "list_checks":    return execListChecks({ manager: polpo.getConversationCheckManager(), sessionId: context.sessionId }, args);
       case "cancel_check":   return execCancelCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
+      case "list_chats":     return execListChats({ chats: polpo });
+      case "send_message":   return execSendMessage(args, { chats: polpo });
 
       // ── Notification Rules ──
       case "add_notification_rule":    return execAddNotificationRule(polpo, args);
