@@ -42,7 +42,7 @@ import { useAsyncAction } from "@/hooks/use-polpo";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { PausedCheckpoints } from "@/components/paused-checkpoints";
+import { PausedCheckpoints, useActiveCheckpoints } from "@/components/paused-checkpoints";
 import { JsonBlock } from "@/components/json-block";
 
 // ── Status styling ──
@@ -345,6 +345,8 @@ function ApprovalCard({
 
 export function ApprovalsPage() {
   const { approvals, pending, approve, reject, refetch, loading } = useApprovals();
+  // Paused checkpoints also wait for a person: count them as pending.
+  const { active: pausedCheckpoints } = useActiveCheckpoints();
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"pending" | "all" | "approved" | "rejected">("pending");
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
@@ -406,11 +408,11 @@ export function ApprovalsPage() {
 
   // Counts for tabs
   const counts = useMemo(() => ({
-    pending: approvals.filter((a) => a.status === "pending").length,
+    pending: approvals.filter((a) => a.status === "pending").length + pausedCheckpoints.length,
     approved: approvals.filter((a) => a.status === "approved").length,
     rejected: approvals.filter((a) => a.status === "rejected" || a.status === "timeout").length,
-    all: approvals.length,
-  }), [approvals]);
+    all: approvals.length + pausedCheckpoints.length,
+  }), [approvals, pausedCheckpoints.length]);
 
   if (loading) {
     return (

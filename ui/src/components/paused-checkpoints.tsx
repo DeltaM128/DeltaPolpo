@@ -19,12 +19,13 @@ function missionNameOf(group: string): string {
   return group.replace(/ #\d+$/, "");
 }
 
-export function PausedCheckpoints({ missionId, missionName }: { missionId?: string; missionName?: string }) {
+const CHECKPOINT_EVENTS = ["checkpoint:reached", "checkpoint:resumed", "mission:completed", "mission:resumed"];
+
+/** Checkpoints where a mission is paused, kept current by events (with a slow poll as fallback). */
+export function useActiveCheckpoints(pollMs = 5000) {
   const { client } = usePolpo();
-  const { missions } = useMissions();
-  const { events } = useEvents(["checkpoint:reached", "checkpoint:resumed"], 20);
+  const { events } = useEvents(CHECKPOINT_EVENTS, 1);
   const [active, setActive] = useState<ActiveCheckpoint[]>([]);
-  const [resuming, setResuming] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!client) return;
@@ -33,12 +34,22 @@ export function PausedCheckpoints({ missionId, missionName }: { missionId?: stri
     } catch { /* server unreachable: keep the last list */ }
   }, [client]);
 
-  // Refresh on checkpoint events, and every few seconds as a fallback.
-  useEffect(() => { void refresh(); }, [refresh, events.length]);
+  // The event buffer is capped, so react to the latest event id, not to its length.
+  const latestEventId = events.at(-1)?.id;
+  useEffect(() => { void refresh(); }, [refresh, latestEventId]);
   useEffect(() => {
-    const t = setInterval(() => void refresh(), 5000);
+    const t = setInterval(() => void refresh(), pollMs);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, pollMs]);
+
+  return { active, refresh };
+}
+
+export function PausedCheckpoints({ missionId, missionName }: { missionId?: string; missionName?: string }) {
+  const { client } = usePolpo();
+  const { missions } = useMissions();
+  const { active, refresh } = useActiveCheckpoints();
+  const [resuming, setResuming] = useState<string | null>(null);
 
   const shown = active
     .map((cp) => {

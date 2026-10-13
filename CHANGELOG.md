@@ -30,6 +30,9 @@ First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflo
 - Playbooks with checkpoints or delays could be saved but not run (missing `dependsOn`), and the run answered a plain-text 500; the required dependencies are now added, and run errors are readable.
 - Approval requests of pipeline steps that stopped waiting (task killed, parallel join decided) no longer stay pending.
 - A mission paused at a checkpoint lost its pause on restart (closing the desktop app): with file storage, checkpoint and delay state was kept in memory only; the blocked task was then force-failed as a "deadlock". The state is now saved to `.polpo/checkpoints.json` / delays file, a paused mission is never treated as a deadlock, and missions paused before the fix get their checkpoint back.
+- After the first setup from the dashboard, the dashboard received no live events (tasks, missions, checkpoints) until the server was restarted: setup replaced the event bridge, but the `/events` route kept the old, idle one. Mission pages, counters and badges now update live during the whole run.
+- The mission page refreshed the mission only on the first change of a run (the "stale" flag was never cleared); checkpoint events now update the mission status (paused / active) too.
+- Paused checkpoints are counted in the Approvals page counters and in the sidebar badge.
 - `GET /missions/checkpoints` and `GET /missions/delays` answered "Mission not found" (shadowed by `GET /missions/:id`).
 - The agents list kept a stale ETag after an agent's configuration changed, so browsers showed outdated agents.
 - Windows build of the installer: Git Bash instead of the WSL launcher, and electron-builder's winCodeSign tools extracted without the macOS symlinks that need Developer Mode.
