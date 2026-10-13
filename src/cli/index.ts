@@ -255,7 +255,10 @@ const serveAction = async (opts: any) => {
       workDir,
       apiKeys,
       corsOrigins,
-      autoStart: hasConfig,
+      // Always: the supervisor only starts once the orchestrator is initialized. With
+      // `hasConfig` here, a server started in setup mode (first run) never ran tasks
+      // after the dashboard's setup completed, until it was restarted.
+      autoStart: true,
     });
 
     // Graceful shutdown: without this Node exits immediately on SIGTERM,
