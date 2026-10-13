@@ -1,3 +1,6 @@
+> **This is DeltaPolpo**, a fork of Polpo 0.4.6 with a playbook graph editor, executable agent pipelines with a visual editor and live view, local (offline) models in setup, and a Windows installer.
+> Start with **[DELTAPOLPO.md](DELTAPOLPO.md)** — what is new, how to install and build it — and the [changelog](CHANGELOG.md). The rest of this README is Polpo's.
+
 <p align="center">
   <img src="docs/polpo-banner.png" alt="Polpo — your AI agent that runs the team" width="680" />
 </p>

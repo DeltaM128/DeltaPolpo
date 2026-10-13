@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6-delta.1] — 2026-10-13 — DeltaPolpo
+
+First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflows, local models and a Windows desktop installer. See [DELTAPOLPO.md](DELTAPOLPO.md).
+
+### Added
+- **Playbook graph editor** (Playbooks → a playbook → Editor): add tasks, checkpoints and delays, connect them by dragging, edit them in a side panel, save. Cycles are refused; renames and deletions update every reference.
+- **New playbook** button: creates an empty playbook and opens it in the editor. **Run** button on playbook cards and on the playbook page (the run dialog existed but nothing opened it).
+- **Agent pipelines are executed**: agents with `loops` and a `pipeline` run it for their tasks (loops, `parallel` with join all/any/n, `switch`, `human` approvals, `when` guards, `stopWhen`, `output.schema`). Previously the pipeline contract was only validated and stored. See [docs/loops.md](docs/loops.md).
+- **Pipeline editor** (Agents → an agent → Pipeline): a top-down flow with "+" insertion points, loop definitions, validation that blocks saving.
+- **Live pipeline view** (Tasks → a task → Pipeline): each step colored by its state, retry feedback, errors, the shared context; live while running, from the run log afterwards.
+- **Local (offline) models in setup**: "Local model (offline)" provider option — Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network; models are discovered, models without tool calling are flagged.
+- **DeltaPolpo Windows installer** (`scripts/build-deltapolpo-installer.ps1`): its own app id, port (3891), settings and data folders, so it installs next to an original Polpo; auto-update off.
+- `PATCH /agents/:name` accepts `pipeline: null` and rejects pipelines that reference unknown loops.
+
+### Fixed
+- Desktop app: **no task ever ran** — the Bun-compiled server started task runners with a script path that does not exist in the binary ("too many arguments"). Runners now start through a hidden `__runner` command.
+- Desktop app: **"Login with subscription" failed for every provider** ("Cannot find module './anthropic.js'"); provider login pages now open in the default browser instead of a bare Electron window.
+- Task runs ignored custom providers from polpo.json ("Model not found for provider") — local servers and gateways only worked in chat.
+- After a setup completed from the dashboard, tasks stayed pending until the server restarted.
+- Playbooks with checkpoints or delays could be saved but not run (missing `dependsOn`), and the run answered a plain-text 500; the required dependencies are now added, and run errors are readable.
+- Approval requests of pipeline steps that stopped waiting (task killed, parallel join decided) no longer stay pending.
+- The agents list kept a stale ETag after an agent's configuration changed, so browsers showed outdated agents.
+- Windows build of the installer: Git Bash instead of the WSL launcher, and electron-builder's winCodeSign tools extracted without the macOS symlinks that need Developer Mode.
+
 ## [0.4.6] — 2026-10-12 — Polpo Knows
 
 ### Added
