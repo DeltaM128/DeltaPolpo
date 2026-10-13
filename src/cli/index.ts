@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { Command } from "commander";
 import { DEFAULT_SERVER_PORT, DEFAULT_SERVER_HOST, getPolpoDir } from "../core/constants.js";
 import { POLPO_PACKAGE_VERSION } from "../core/version.js";
+import { RUNNER_COMMAND } from "../core/runner-command.js";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 
 // pi-ai loads each provider's OAuth flow through a variable import() that a compiled
@@ -642,8 +643,14 @@ registerProjectsCommand(program);
 registerCloudStatusCommand(program);
 registerCloudLogsCommand(program);
 
-// Non-blocking update check — prints notice at exit if a new version exists
-const printUpdateNotice = startUpdateCheck(PKG_VERSION);
-process.on("exit", printUpdateNotice);
+if (process.argv[2] === RUNNER_COMMAND) {
+  // A task run (see NodeSpawner): in a compiled binary there is no runner.js on disk to start,
+  // so the server starts itself with this hidden command. The runner reads --config and exits.
+  await import("../core/runner.js");
+} else {
+  // Non-blocking update check — prints notice at exit if a new version exists
+  const printUpdateNotice = startUpdateCheck(PKG_VERSION);
+  process.on("exit", printUpdateNotice);
 
-program.parse();
+  program.parse();
+}
