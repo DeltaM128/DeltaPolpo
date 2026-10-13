@@ -52,10 +52,12 @@ export class TaskManager {
     // Apply any modifications from hooks
     const hookData = hookResult.data;
 
-    // Enforce unique title among active (non-terminal) tasks
+    // Enforce unique title among active (non-terminal) tasks of the same group: missions refer to
+    // their tasks by title, while two runs of one playbook (separate groups) reuse the same titles.
     const existingTasks = await this.ctx.registry.getAllTasks();
     const duplicate = existingTasks.find(
-      t => t.title === hookData.title && t.status !== "done" && t.status !== "failed",
+      t => t.title === hookData.title && (t.group ?? undefined) === (hookData.group ?? undefined)
+        && t.status !== "done" && t.status !== "failed",
     );
     if (duplicate) {
       throw new Error(

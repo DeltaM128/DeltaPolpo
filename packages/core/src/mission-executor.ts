@@ -447,7 +447,8 @@ export class MissionExecutor {
 
   async saveMission(opts: { data: string; prompt?: string; name?: string; status?: MissionStatus; notifications?: ScopedNotificationRules }): Promise<Mission> {
     if (!this.ctx.registry.saveMission) throw new Error("Store does not support missions");
-    const name = opts.name ?? (await this.ctx.registry.nextMissionName?.()) ?? `mission-${Date.now()}`;
+    const requested = opts.name ?? (await this.ctx.registry.nextMissionName?.()) ?? `mission-${Date.now()}`;
+    const name = await this.uniqueMissionName(requested);
     const mission = await this.ctx.registry.saveMission({
       name,
       data: opts.data,
@@ -457,6 +458,19 @@ export class MissionExecutor {
     });
     this.ctx.emitter.emit("mission:saved", { missionId: mission.id, name: mission.name, status: mission.status });
     return mission;
+  }
+
+  /**
+   * A mission's name is its task group, so two missions with the same name (e.g. running a
+   * playbook twice) would share tasks, checkpoints and completion: the second run would see the
+   * first run's finished tasks and never be marked completed. Later missions get "name (2)", "(3)"…
+   */
+  private async uniqueMissionName(name: string): Promise<string> {
+    const taken = new Set((await this.ctx.registry.getAllMissions?.() ?? []).map(m => m.name));
+    if (!taken.has(name)) return name;
+    let n = 2;
+    while (taken.has(`${name} (${n})`)) n++;
+    return `${name} (${n})`;
   }
 
   async getMission(missionId: string): Promise<Mission | undefined> {
