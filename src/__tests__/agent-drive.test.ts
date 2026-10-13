@@ -164,12 +164,14 @@ describe("DriveManager", () => {
   });
 
   it("reflects the first time, then after its interval when something happened, and daily; journals what it did", async () => {
+    const t0 = new Date("2026-10-13T10:00:00Z");
+    const at = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
     runner.mockImplementation(async ({ agent }) => {
       manager.setSelf(agent.name, "I am Coach: warm, direct.", "reflection");
       manager.noteAction(agent.name, "planned chk_1 → Family (wishes)");
       return { text: "Tomorrow I wish Grazia a happy birthday." };
     });
-    await manager.tick();
+    await manager.tick(t0);
     expect(runner).toHaveBeenCalledTimes(1);
     expect(runner.mock.calls[0]![0].prompt).toMatch(/^\[Reflection — your first reflection/);
     const [entry] = manager.listJournal("coach");
@@ -177,21 +179,21 @@ describe("DriveManager", () => {
     expect(emitted[0]).toMatchObject({ event: "agent:reflected", payload: { agentName: "coach", trigger: "first" } });
 
     // within its interval: nothing
-    await manager.tick();
+    await manager.tick(t0);
     expect(runner).toHaveBeenCalledTimes(1);
     // after its interval, but nothing new: nothing
-    await manager.tick(new Date(Date.now() + 61 * 60_000));
+    await manager.tick(at(61));
     expect(runner).toHaveBeenCalledTimes(1);
     // something new after its interval: reflects
     const chat = await sessions.create("Diet", "coach");
-    sessions.say(chat, "user", "Went to the gym!", new Date(Date.now() + 1000).toISOString());
-    await manager.tick(new Date(Date.now() + 61 * 60_000));
+    sessions.say(chat, "user", "Went to the gym!", new Date().toISOString());
+    await manager.tick(at(62));
     expect(runner).toHaveBeenCalledTimes(2);
     expect(runner.mock.calls[1]![0].prompt).toMatch(/^\[Reflection — 1 new message\(s\) since your last reflection/);
     // a day later, even with nothing new
-    await manager.tick(new Date(Date.now() + 25 * 60 * 60_000));
+    await manager.tick(at(25 * 60));
     expect(runner).toHaveBeenCalledTimes(3);
-    expect(runner.mock.calls[2]![0].prompt).toMatch(/daily reflection/);
+    expect(runner.mock.calls[2]![0].prompt).toMatch(/^\[Reflection — the start of your day\. Now: Wednesday 2026-10-14 13:00/);
     // agents without a drive never reflect
     expect(runner.mock.calls.every(([input]) => input.agent.name === "coach")).toBe(true);
   });
@@ -272,5 +274,71 @@ describe("Polpo's drive tools", () => {
     expect(shown).toContain("Autonomy: balanced");
     expect(shown).toContain("(not written yet)");
     expect(shown).toMatch(/Latest reflections:\n- .* \(manual, 0 msg\): Nothing to do now\./);
+  });
+});
+
+describe("goals: cascade, plan tree, review rhythm", () => {
+  it("dueReviews: daily once its day has started; weekly, monthly, quarterly on a new period", async () => {
+    const { dueReviews } = await import("../core/drive.js");
+    const tz = "Europe/Rome";
+    // Wednesday 2026-10-14 06:00 in Rome: the day has not started (07:30)
+    expect(dueReviews({ day: "2026-10-13T06:00:00Z", week: "2026-10-12T06:00:00Z", month: "2026-10-01T06:00:00Z", quarter: "2026-10-01T06:00:00Z" }, new Date("2026-10-14T04:00:00Z"), tz)).toEqual([]);
+    // 08:00 in Rome: the daily review only (same week, month, quarter)
+    expect(dueReviews({ day: "2026-10-13T06:00:00Z", week: "2026-10-12T06:00:00Z", month: "2026-10-01T06:00:00Z", quarter: "2026-10-01T06:00:00Z" }, new Date("2026-10-14T06:00:00Z"), tz)).toEqual(["day"]);
+    // already reviewed today
+    expect(dueReviews({ day: "2026-10-14T05:40:00Z" }, new Date("2026-10-14T09:00:00Z"), tz)).toEqual([]);
+    // Monday 2026-10-19: a new week
+    expect(dueReviews({ day: "2026-10-18T06:00:00Z", week: "2026-10-12T06:00:00Z", month: "2026-10-01T06:00:00Z", quarter: "2026-10-01T06:00:00Z" }, new Date("2026-10-19T06:00:00Z"), tz)).toEqual(["day", "week"]);
+    // Sunday 2026-11-01: a new month (and still the same week)
+    expect(dueReviews({ day: "2026-10-31T06:00:00Z", week: "2026-10-26T06:00:00Z", month: "2026-10-01T06:00:00Z", quarter: "2026-10-01T06:00:00Z" }, new Date("2026-11-01T07:00:00Z"), tz)).toEqual(["day", "month"]);
+    // 2027-01-01: new week, month and quarter; a custom day start
+    expect(dueReviews({ day: "2026-12-31T06:00:00Z", week: "2026-12-21T06:00:00Z", month: "2026-12-01T06:00:00Z", quarter: "2026-10-01T06:00:00Z" }, new Date("2027-01-01T08:00:00Z"), tz, "09:30")).toEqual([]);
+    expect(dueReviews({ day: "2026-12-31T06:00:00Z", week: "2026-12-21T06:00:00Z", month: "2026-12-01T06:00:00Z", quarter: "2026-10-01T06:00:00Z" }, new Date("2027-01-01T09:00:00Z"), tz, "09:30")).toEqual(["day", "week", "month", "quarter"]);
+  });
+
+  it("the plan is a tree of goals by horizon with steps, owners, measures and progress", async () => {
+    const { describePlanTree } = await import("../core/drive.js");
+    const [, add, update] = createDriveTools("coach", manager);
+    const text = async (tool: typeof add, args: Record<string, unknown>) => (await tool!.execute("t", args as any)).content[0]!.text;
+    const long = await text(add, { title: "Alessio is fit and eats well by spring", horizon: "long", owner: "Alessio", measure: "-6 kg, runs 10 km" });
+    const longId = /pln_[\w-]+/.exec(long)![0];
+    const week = await text(add, { title: "Three workouts this week", horizon: "week", parent: longId, owner: "Alessio", measure: "3 sessions logged" });
+    const weekId = /pln_[\w-]+/.exec(week)![0];
+    await text(add, { title: "Learn sports nutrition basics and write a skill", parent: longId });
+    expect(await text(add, { title: "x", parent: "pln_nope" })).toMatch(/No goal pln_nope/);
+    expect(await text(update, { id: weekId, progress: 66, notes: "Mon and Wed done", status: "doing" })).toBe(`${weekId} [doing, 66%]: Three workouts this week — Mon and Wed done`);
+
+    const tree = describePlanTree(manager.listPlan("coach"));
+    expect(tree[0]).toMatch(/^- pln_\S+ \[long goal, todo\] Alessio is fit and eats well by spring \(for Alessio, measure: -6 kg, runs 10 km\)/);
+    expect(tree[1]).toMatch(/^ {2}- pln_\S+ \[week goal, doing\] Three workouts this week \(for Alessio, measure: 3 sessions logged, 66%\) — Mon and Wed done/);
+    expect(tree[2]).toMatch(/^ {2}- pln_\S+ \[step, todo\] Learn sports nutrition basics/);
+
+    // it is part of every chat
+    expect(drivePrompt(agents[0]!, "me", [], manager.listPlan("coach"))).toContain("### Your plan (open goals and steps)");
+    await text(update, { id: weekId, status: "done" });
+    expect(manager.listPlan("coach").find((i) => i.id === weekId)).toMatchObject({ status: "done", progress: 100 });
+  });
+
+  it("the start of the day brings the daily planning, and the weekly review on a new week", async () => {
+    store.saveState("coach", { cursors: {}, roomCursors: {}, lastReflectionAt: "2026-10-18T20:00:00Z", lastReviews: { day: "2026-10-18T06:00:00Z", week: "2026-10-12T06:00:00Z", month: "2026-10-01T06:00:00Z", quarter: "2026-10-01T06:00:00Z" } });
+    runner.mockResolvedValue({ text: "Planned the week." });
+    await manager.tick(new Date("2026-10-19T06:00:00Z")); // Monday 08:00 in Rome
+    expect(runner).toHaveBeenCalledTimes(1);
+    const prompt = runner.mock.calls[0]![0].prompt as string;
+    expect(prompt).toMatch(/^\[Reflection — the start of your day, with your weekly review\. Now: Monday 2026-10-19 08:00 \(Europe\/Rome\)\]/);
+    expect(prompt).toContain("- Weekly review: get clear");
+    expect(prompt).toContain("- Daily planning: what moved yesterday");
+    expect(prompt).not.toContain("Monthly review");
+    expect(manager.listJournal("coach")[0]).toMatchObject({ trigger: "daily", reviews: ["day", "week"] });
+    expect(store.getState("coach").lastReviews?.week).toBeDefined();
+  });
+
+  it("the first reflection sets up every horizon", async () => {
+    runner.mockResolvedValue({ text: "Set up." });
+    await manager.tick();
+    const prompt = runner.mock.calls[0]![0].prompt as string;
+    expect(prompt).toContain("Set up: break your purpose and goals down into long-term (6–12 months), quarter, month, week and today goals");
+    expect(prompt).toContain("- Quarterly review");
+    expect(manager.listJournal("coach")[0]!.reviews).toEqual(["quarter", "month", "week", "day"]);
   });
 });

@@ -1,9 +1,10 @@
 /**
  * Drive REST API — what an agent pursues on its own initiative, and what it plans.
  *
- *   GET  /drive/:agent                          its drive, self-portrait, intentions and latest reflections
+ *   GET  /drive/:agent                          its drive, self-portrait, plan, intentions and latest reflections
  *   PUT  /drive/:agent/self                     rewrite its self-portrait { portrait }
  *   POST /drive/:agent/reflect                  have it reflect now
+ *   PATCH /drive/:agent/plan/:id                change a goal or step of its plan { status?, progress?, notes? }
  *   POST /drive/:agent/intentions/:id/confirm   say yes to a proposed intention
  *   POST /drive/:agent/intentions/:id/cancel    drop an intention
  *
@@ -37,6 +38,7 @@ export function driveRoutes(getDeps: () => DriveRoutesDeps): OpenAPIHono {
         drive: agent.drive ?? { enabled: false },
         self: manager?.getSelf(agent.name) ?? "",
         selfHistory: manager?.listSelfHistory(agent.name).slice(0, 10) ?? [],
+        plan: manager?.listPlan(agent.name) ?? [],
         intentions: await manager?.intentions(agent.name) ?? [],
         journal: manager?.listJournal(agent.name, limit) ?? [],
         lastReflectionAt: manager?.lastReflectionAt(agent.name) ?? null,
@@ -52,6 +54,26 @@ export function driveRoutes(getDeps: () => DriveRoutesDeps): OpenAPIHono {
     const body = await c.req.json().catch(() => ({})) as { portrait?: unknown };
     if (typeof body.portrait !== "string") return fail(c, 400, "portrait must be a string");
     return c.json({ ok: true, data: { revision: manager.setSelf(agent.name, body.portrait, "person") } });
+  });
+
+  app.patch("/:agent/plan/:id", async (c) => {
+    const agent = await agentOf(c.req.param("agent"));
+    if (!agent) return fail(c, 404, "Agent not found");
+    const manager = getDeps().manager;
+    if (!manager) return fail(c, 503, "Drives are not available on this instance");
+    const body = await c.req.json().catch(() => ({})) as { status?: unknown; progress?: unknown; notes?: unknown };
+    const statuses = ["todo", "doing", "done", "dropped"];
+    if (body.status !== undefined && !statuses.includes(String(body.status))) return fail(c, 400, `status must be one of ${statuses.join(", ")}`);
+    try {
+      const item = manager.updatePlanItem(agent.name, c.req.param("id"), {
+        ...(body.status !== undefined ? { status: body.status as "todo" } : {}),
+        ...(body.progress !== undefined ? { progress: Number(body.progress) } : {}),
+        ...(typeof body.notes === "string" ? { notes: body.notes } : {}),
+      });
+      return c.json({ ok: true, data: { item } });
+    } catch (err) {
+      return fail(c, 404, err instanceof Error ? err.message : String(err));
+    }
   });
 
   app.post("/:agent/reflect", async (c) => {

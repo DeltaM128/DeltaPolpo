@@ -9,6 +9,26 @@ export interface DriveSettings {
   goals?: string[];
   autonomy?: DriveAutonomy;
   reflectEveryMinutes?: number;
+  dayStartsAt?: string;
+}
+
+export type GoalHorizon = "long" | "quarter" | "month" | "week" | "day";
+
+export interface PlanItem {
+  id: string;
+  title: string;
+  horizon?: GoalHorizon;
+  parentId?: string;
+  measure?: string;
+  progress?: number;
+  owner?: string;
+  why?: string;
+  goal?: string;
+  status: "todo" | "doing" | "done" | "dropped";
+  due?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Intention {
@@ -32,11 +52,13 @@ export interface ReflectionEntry {
   messages: number;
   summary: string;
   actions: string[];
+  reviews?: ("day" | "week" | "month" | "quarter")[];
 }
 
 export interface DriveData {
   drive: DriveSettings;
   self: string;
+  plan: PlanItem[];
   intentions: Intention[];
   journal: ReflectionEntry[];
   lastReflectionAt: string | null;
@@ -69,6 +91,8 @@ export const driveApi = {
   saveSelf: (agent: string, portrait: string) =>
     request<unknown>(`${agentPath(agent)}/self`, { method: "PUT", body: JSON.stringify({ portrait }) }),
   reflectNow: (agent: string) => request<{ entry: ReflectionEntry }>(`${agentPath(agent)}/reflect`, { method: "POST" }),
+  updatePlanItem: (agent: string, id: string, patch: Partial<Pick<PlanItem, "status" | "progress" | "notes">>) =>
+    request<unknown>(`${agentPath(agent)}/plan/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   confirm: (agent: string, id: string) =>
     request<unknown>(`${agentPath(agent)}/intentions/${encodeURIComponent(id)}/confirm`, { method: "POST" }),
   cancel: (agent: string, id: string) =>

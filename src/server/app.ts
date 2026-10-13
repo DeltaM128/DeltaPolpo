@@ -291,7 +291,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       const drive = o.getDriveManager();
       if (!agentConfig.drive?.enabled || !drive) return undefined;
       const { drivePrompt } = await import("../core/drive.js");
-      return drivePrompt(agentConfig, drive.getSelf(agentConfig.name), await drive.intentions(agentConfig.name));
+      return drivePrompt(agentConfig, drive.getSelf(agentConfig.name), await drive.intentions(agentConfig.name), drive.listPlan(agentConfig.name));
     },
     buildAgentPrompt: async (agentConfig: any) => {
       // Pull the agent's mailboxes from vault so the prompt enumerates

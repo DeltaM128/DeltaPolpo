@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Compass, Loader2, NotebookPen, RotateCcw, Sparkles, UserRound, X, CalendarClock } from "lucide-react";
+import { Check, Compass, Loader2, NotebookPen, RotateCcw, Sparkles, Target, UserRound, X, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { useEvents } from "@polpo-ai/react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { driveApi, type DriveAutonomy, type DriveData, type DriveSettings, type Intention } from "@/lib/drive-api";
+import { driveApi, type DriveAutonomy, type DriveData, type DriveSettings, type GoalHorizon, type Intention, type PlanItem } from "@/lib/drive-api";
 import { useAgentDetail } from "./agent-detail-context";
 
 const AUTONOMY: { value: DriveAutonomy; label: string; hint: string }[] = [
@@ -21,6 +21,56 @@ const AUTONOMY: { value: DriveAutonomy; label: string; hint: string }[] = [
   { value: "balanced", label: "Balanced", hint: "Acts on low-stakes things (wishes, check-ins, reminders), asks first otherwise." },
   { value: "act", label: "Act", hint: "Acts on its own judgment." },
 ];
+
+const HORIZON: Record<GoalHorizon, string> = { long: "6–12 months", quarter: "Quarter", month: "Month", week: "Week", day: "Today" };
+
+/** The open plan as a tree (each goal with what serves it), then the latest closed items. */
+function planRows(plan: PlanItem[]): { item: PlanItem; depth: number }[] {
+  const open = plan.filter((i) => i.status === "todo" || i.status === "doing");
+  const ids = new Set(open.map((i) => i.id));
+  const rows: { item: PlanItem; depth: number }[] = [];
+  const walk = (parent: string | undefined, depth: number) => {
+    for (const item of open.filter((i) => (i.parentId && ids.has(i.parentId) ? i.parentId : undefined) === parent)) {
+      rows.push({ item, depth });
+      walk(item.id, depth + 1);
+    }
+  };
+  walk(undefined, 0);
+  return rows;
+}
+
+function PlanRow({ item, depth, busy, onStatus }: { item: PlanItem; depth: number; busy: boolean; onStatus: (status: PlanItem["status"]) => void }) {
+  const closed = item.status === "done" || item.status === "dropped";
+  return (
+    <div className="rounded-md border border-border/40 bg-background/40 px-3 py-2 text-xs space-y-1" style={{ marginLeft: depth * 16 }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={item.horizon ? "default" : "outline"} className="text-[10px]">{item.horizon ? HORIZON[item.horizon] : "Step"}</Badge>
+        <span className={closed ? "line-through text-muted-foreground" : "font-medium"}>{item.title}</span>
+        {item.owner && <span className="text-muted-foreground">for {item.owner}</span>}
+        {item.status === "doing" && <Badge variant="secondary" className="text-[10px]">In progress</Badge>}
+        {!closed && (
+          <span className="ml-auto flex gap-1">
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => onStatus("done")}>
+              <Check className="h-3 w-3" /> Done
+            </Button>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => onStatus("dropped")}>
+              <X className="h-3 w-3" /> Drop
+            </Button>
+          </span>
+        )}
+      </div>
+      {(item.measure || item.due) && (
+        <p className="text-muted-foreground">{[item.measure && `Measure: ${item.measure}`, item.due && `Due: ${item.due}`].filter(Boolean).join(" · ")}</p>
+      )}
+      {item.progress !== undefined && !closed && (
+        <div className="h-1.5 w-full max-w-xs rounded bg-muted" title={`${item.progress}%`}>
+          <div className="h-1.5 rounded bg-primary" style={{ width: `${item.progress}%` }} />
+        </div>
+      )}
+      {item.notes && <p className="whitespace-pre-wrap text-muted-foreground">{item.notes}</p>}
+    </div>
+  );
+}
 
 const TRIGGER: Record<string, string> = { first: "first", activity: "after new messages", daily: "daily", manual: "on request" };
 
@@ -172,6 +222,11 @@ export function AgentDriveTab() {
               <Input type="number" min={15} placeholder="120" value={draft.reflectEveryMinutes ?? ""}
                 onChange={(e) => setDraft({ ...draft, reflectEveryMinutes: e.target.value === "" ? undefined : Math.max(15, Math.round(Number(e.target.value))) })} />
             </label>
+            <label className="block max-w-xs space-y-1">
+              <span className="text-muted-foreground">Its day starts at (daily planning; weekly, monthly, quarterly reviews)</span>
+              <Input type="time" placeholder="07:30" value={draft.dayStartsAt ?? ""}
+                onChange={(e) => setDraft({ ...draft, dayStartsAt: e.target.value || undefined })} />
+            </label>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" onClick={save} disabled={!dirty || saving}>
                 {saving && <Loader2 className="h-3 w-3 animate-spin" />} Save
@@ -221,7 +276,33 @@ export function AgentDriveTab() {
         <Card className="bg-card/80 backdrop-blur-sm border-border/40">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm">
-              <CalendarClock className="h-4 w-4" /> What it plans
+              <Target className="h-4 w-4" /> Goals and steps
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {planRows(data.plan ?? []).length === 0
+              ? <p className="text-xs text-muted-foreground">No plan yet: {agentName} breaks its purpose down into goals (6–12 months, quarter, month, week, today) and steps at its reflections.</p>
+              : planRows(data.plan ?? []).map(({ item, depth }) => (
+                <PlanRow key={item.id} item={item} depth={depth} busy={busy === item.id}
+                  onStatus={(status) => void run(item.id, () => driveApi.updatePlanItem(agentName, item.id, { status }), status === "done" ? "Marked done" : "Dropped")} />
+              ))}
+            {(data.plan ?? []).some((i) => i.status === "done") && (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-muted-foreground">Done recently</summary>
+                <div className="mt-2 space-y-1">
+                  {(data.plan ?? []).filter((i) => i.status === "done").slice(0, 10).map((item) => (
+                    <PlanRow key={item.id} item={item} depth={0} busy={false} onStatus={() => {}} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card/80 backdrop-blur-sm border-border/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <CalendarClock className="h-4 w-4" /> What it will do (scheduled)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -246,7 +327,9 @@ export function AgentDriveTab() {
               ? <p className="text-muted-foreground">No reflections yet.</p>
               : data.journal.map((e) => (
                 <div key={e.id} className="rounded-md border border-border/40 bg-background/40 px-3 py-2 space-y-1">
-                  <div className="text-muted-foreground">{when(e.at)} · {TRIGGER[e.trigger] ?? e.trigger} · {e.messages} new message(s)</div>
+                  <div className="text-muted-foreground">
+                    {when(e.at)} · {TRIGGER[e.trigger] ?? e.trigger}{e.reviews?.length ? ` (${e.reviews.map((r) => (r === "day" ? "daily" : `${r}ly`)).join(", ")} review)` : ""} · {e.messages} new message(s)
+                  </div>
                   <p className="whitespace-pre-wrap">{e.summary}</p>
                   {e.actions.length > 0 && (
                     <ul className="list-disc pl-4 text-muted-foreground">

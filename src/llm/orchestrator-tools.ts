@@ -850,11 +850,12 @@ const agentDriveParam = Type.Optional(Type.Object({
     description: "propose: its own initiatives wait for a yes; balanced (default): acts on low-stakes, asks first otherwise; act: its own judgment",
   })),
   reflectEveryMinutes: Type.Optional(Type.Number({ minimum: 15, description: "Minutes between reflections when something new happened (default 120; also once a day)" })),
+  dayStartsAt: Type.Optional(Type.String({ description: "When its day starts, \"HH:MM\" in its timezone: daily planning and the weekly/monthly/quarterly reviews (default 07:30)" })),
 }, { description: "Drive (purpose and goals it pursues on its own): off by default. Omit to keep current." }));
 
 const getAgentDriveTool: Tool = {
   name: "get_agent_drive",
-  description: "An agent's drive: purpose, goals, autonomy, its self-portrait, its intentions (planned or proposed, with ids for confirm_check / cancel_check) and its latest reflections (what it decided and why).",
+  description: "An agent's drive: purpose, goals, autonomy, its self-portrait, its plan (goals by horizon and steps, with progress), its intentions (planned or proposed, with ids for confirm_check / cancel_check) and its latest reflections (what it decided and why).",
   parameters: Type.Object({
     agent: Type.String({ description: "Agent name" }),
     limit: Type.Optional(Type.Number({ description: "Reflections to show (default 5)" })),
@@ -882,11 +883,14 @@ async function execAgentDrive(polpo: Orchestrator, toolName: string, args: Recor
   const lines = [
     `Drive of ${agent.name}: ${d?.enabled ? "on" : "off"}${d?.purpose ? `. Purpose: ${d.purpose}` : ""}`,
     ...(d?.goals?.length ? [`Goals: ${d.goals.join("; ")}`] : []),
-    `Autonomy: ${d?.autonomy ?? "balanced"}; reflects every ${d?.reflectEveryMinutes ?? 120} min when something happens, and daily.`,
+    `Autonomy: ${d?.autonomy ?? "balanced"}; reflects every ${d?.reflectEveryMinutes ?? 120} min when something happens, and every day at ${d?.dayStartsAt ?? "07:30"} (with weekly, monthly and quarterly reviews).`,
     "",
     "Self-portrait:",
     manager.getSelf(agent.name) || "(not written yet)",
   ];
+  const { describePlanTree } = await import("../core/drive.js");
+  const plan = manager.listPlan(agent.name).filter((i) => i.status === "todo" || i.status === "doing");
+  lines.push("", plan.length ? "Plan (open goals and steps):" : "No plan yet.", ...describePlanTree(plan, 40));
   const intentions = await manager.intentions(agent.name);
   lines.push("", intentions.length ? "Intentions:" : "No intentions.");
   for (const c of intentions.slice(0, 20)) {

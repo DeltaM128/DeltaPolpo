@@ -1889,8 +1889,11 @@ export async function buildChatSystemPrompt(
     `  on its chats and groups (also what it only read) every so often and daily, keeps a self-portrait (its personality,`,
     `  the people who matter, open threads), and decides by itself when to write, to whom, or what to plan for later`,
     `  (intentions: scheduled checks with a why), following human customs (birthdays, wishes, check-ins, tact, timing).`,
+    `  It also works on itself like a person with goals: it breaks its purpose into long-term, quarter, month, week and day`,
+    `  goals with measures and steps (its plan), reviews them daily (at dayStartsAt) and weekly, monthly, quarterly, studies`,
+    `  what it lacks and writes its own skills.`,
     `  Set it with update_agent ({ drive: { enabled, purpose, goals?, autonomy?: "propose" | "balanced" | "act",`,
-    `  reflectEveryMinutes? } }). "What is X up to / what does it plan?" → get_agent_drive; "have X think about it now" →`,
+    `  reflectEveryMinutes?, dayStartsAt? } }). "What is X up to / what does it plan?" → get_agent_drive; "have X think about it now" →`,
     `  reflect_agent; proposed intentions wait for a yes → confirm_check or cancel_check.`,
     `- **Reactions**: on Telegram an answer that is a single emoji becomes a reaction on the message.`,
   );

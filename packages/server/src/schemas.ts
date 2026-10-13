@@ -378,6 +378,7 @@ const AgentDriveSchema = z.object({
   goals: z.array(z.string().max(500)).max(30).optional(),
   autonomy: z.enum(["propose", "balanced", "act"]).optional(),
   reflectEveryMinutes: z.number().int().min(15).optional(),
+  dayStartsAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
 }).strict();
 
 export const AddAgentSchema = z.object({

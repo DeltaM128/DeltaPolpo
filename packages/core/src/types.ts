@@ -359,6 +359,8 @@ export interface AgentDrive {
   autonomy?: AgentAutonomy;
   /** Minutes between two reflections when something new happened (also once a day regardless). Default 120. */
   reflectEveryMinutes?: number;
+  /** When its day starts ("HH:MM" in its timezone): its daily planning, and the weekly, monthly and quarterly reviews. Default "07:30". */
+  dayStartsAt?: string;
 }
 
 export interface AgentConfig {
