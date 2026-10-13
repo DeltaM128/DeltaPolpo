@@ -1148,7 +1148,8 @@ export interface UpdateAgentRequest {
   reasoning?: string;
   runtime?: string;
   loops?: Record<string, LoopConfig>;
-  pipeline?: Pipeline;
+  /** null removes the pipeline. */
+  pipeline?: Pipeline | null;
   browserProfile?: string;
   emailAllowedDomains?: string[];
   /** Move agent to a different team. */
