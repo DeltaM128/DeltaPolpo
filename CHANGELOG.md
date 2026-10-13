@@ -13,7 +13,8 @@ First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflo
 
 ### Added
 - **Playbook graph editor** (Playbooks → a playbook → Editor): add tasks, checkpoints and delays, connect them by dragging, edit them in a side panel, save. Cycles are refused; renames and deletions update every reference.
-- **Approve checkpoints from the dashboard**: missions paused at a playbook checkpoint are listed on the Approvals page and on the mission page with an "Approve and continue" button (the resume API existed but nothing in the dashboard called it).
+- **Approve checkpoints from the dashboard**: a mission paused at a playbook checkpoint opens a regular approval request (Approvals page, sidebar badge, history, `/approve`): approving it resumes the mission, rejecting it aborts the mission. The mission page shows the pause with an "Approve and continue" button. (The resume API existed but nothing in the dashboard called it.)
+- **Delete a mission** from its page (with confirmation); **Abort** also works on a mission paused at a checkpoint.
 - **New playbook** button: creates an empty playbook and opens it in the editor. **Run** button on playbook cards and on the playbook page (the run dialog existed but nothing opened it).
 - **Agent pipelines are executed**: agents with `loops` and a `pipeline` run it for their tasks (loops, `parallel` with join all/any/n, `switch`, `human` approvals, `when` guards, `stopWhen`, `output.schema`). Previously the pipeline contract was only validated and stored. See [docs/loops.md](docs/loops.md).
 - **Pipeline editor** (Agents → an agent → Pipeline): a top-down flow with "+" insertion points, loop definitions, validation that blocks saving.
@@ -33,7 +34,9 @@ First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflo
 - Running a playbook a second time created a mission with the same name, i.e. the same task group: the new run saw the first run's finished tasks (its checkpoint was reached at once) and was never marked completed, staying "running" forever. A new mission with a taken name is now named "name (2)", "name (3)"… (with SQLite storage the second run failed instead). Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
 - After the first setup from the dashboard, the dashboard received no live events (tasks, missions, checkpoints) until the server was restarted: setup replaced the event bridge, but the `/events` route kept the old, idle one. Mission pages, counters and badges now update live during the whole run.
 - The mission page refreshed the mission only on the first change of a run (the "stale" flag was never cleared); checkpoint events now update the mission status (paused / active) too.
-- Paused checkpoints are counted in the Approvals page counters and in the sidebar badge.
+- With two runs of the same playbook (or two missions with the same task titles) in progress, a checkpoint could be skipped: checkpoints, delays and quality gates looked for their tasks by title across all missions, so one run's checkpoint counted as "not reached" while the other run's task was still pending. They now look only at their own mission's tasks.
+- Missions sharing a name (created before names were unique) never completed and could not be aborted or resumed: completion, abort and the mission page went by the shared group and always found the first mission. They now work per mission; missions left "active" with all tasks finished are completed on the next start. Deleting one of them no longer deletes the other missions' tasks.
+- The Approvals page blanked (counters back to 0) on every refresh; it now keeps the list on screen while updating.
 - `GET /missions/checkpoints` and `GET /missions/delays` answered "Mission not found" (shadowed by `GET /missions/:id`).
 - The agents list kept a stale ETag after an agent's configuration changed, so browsers showed outdated agents.
 - Windows build of the installer: Git Bash instead of the WSL launcher, and electron-builder's winCodeSign tools extracted without the macOS symlinks that need Developer Mode.

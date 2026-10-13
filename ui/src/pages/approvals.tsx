@@ -42,7 +42,7 @@ import { useAsyncAction } from "@/hooks/use-polpo";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { PausedCheckpoints, useActiveCheckpoints } from "@/components/paused-checkpoints";
+import { Link } from "react-router-dom";
 import { JsonBlock } from "@/components/json-block";
 
 // ── Status styling ──
@@ -202,6 +202,13 @@ function RejectDialog({
 
 // ── Approval card ──
 
+/** Payload of the approval that stands for a mission paused at a checkpoint. */
+interface CheckpointPayload { kind: "checkpoint"; message?: string; afterTasks?: string[]; blocksTasks?: string[] }
+
+function isCheckpointPayload(payload: unknown): payload is CheckpointPayload {
+  return typeof payload === "object" && payload !== null && (payload as { kind?: unknown }).kind === "checkpoint";
+}
+
 function ApprovalCard({
   request,
   onApprove,
@@ -216,6 +223,7 @@ function ApprovalCard({
   const cfg = approvalStatusConfig[request.status];
   const StatusIcon = cfg.icon;
   const isPending = request.status === "pending";
+  const checkpoint = isCheckpointPayload(request.payload) ? request.payload : undefined;
 
   return (
     <Card className={cn(
@@ -264,9 +272,11 @@ function ApprovalCard({
                 </Tooltip>
               )}
               {request.missionId && (
-                <Badge variant="secondary" className="text-[9px] gap-1 px-1.5 py-0">
-                  Mission {request.missionId.slice(0, 8)}
-                </Badge>
+                <Link to={`/missions/${request.missionId}`}>
+                  <Badge variant="secondary" className="text-[9px] gap-1 px-1.5 py-0 hover:bg-secondary/70">
+                    Mission {request.missionId.slice(0, 8)}
+                  </Badge>
+                </Link>
               )}
               <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                 <Clock className="h-2.5 w-2.5" />
@@ -287,6 +297,15 @@ function ApprovalCard({
                   Resolved {formatDistanceToNow(new Date(request.resolvedAt), { addSuffix: true })}
                 </span>
               </div>
+            )}
+
+            {/* A checkpoint: what to check, and what approving lets start */}
+            {checkpoint && (
+              <p className="text-xs text-muted-foreground mt-2">
+                {checkpoint.message ? `${checkpoint.message} · ` : ""}
+                Done: {checkpoint.afterTasks?.join(", ") || "—"} · Approve to start: {checkpoint.blocksTasks?.join(", ") || "—"}
+                {isPending && " · Reject aborts the mission"}
+              </p>
             )}
 
             {/* Note */}
@@ -345,8 +364,6 @@ function ApprovalCard({
 
 export function ApprovalsPage() {
   const { approvals, pending, approve, reject, refetch, loading } = useApprovals();
-  // Paused checkpoints also wait for a person: count them as pending.
-  const { active: pausedCheckpoints } = useActiveCheckpoints();
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"pending" | "all" | "approved" | "rejected">("pending");
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
@@ -408,11 +425,11 @@ export function ApprovalsPage() {
 
   // Counts for tabs
   const counts = useMemo(() => ({
-    pending: approvals.filter((a) => a.status === "pending").length + pausedCheckpoints.length,
+    pending: approvals.filter((a) => a.status === "pending").length,
     approved: approvals.filter((a) => a.status === "approved").length,
     rejected: approvals.filter((a) => a.status === "rejected" || a.status === "timeout").length,
-    all: approvals.length + pausedCheckpoints.length,
-  }), [approvals, pausedCheckpoints.length]);
+    all: approvals.length,
+  }), [approvals]);
 
   if (loading) {
     return (
@@ -431,9 +448,6 @@ export function ApprovalsPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-4">
-      {/* Missions paused at a playbook checkpoint (not approval requests, resumed here too) */}
-      <PausedCheckpoints />
-
       {/* ── Stats row ── */}
       <div className="grid grid-cols-2 gap-2 shrink-0 sm:grid-cols-4 sm:gap-3">
         <StatCard

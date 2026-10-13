@@ -19,7 +19,7 @@ function missionNameOf(group: string): string {
   return group.replace(/ #\d+$/, "");
 }
 
-const CHECKPOINT_EVENTS = ["checkpoint:reached", "checkpoint:resumed", "mission:completed", "mission:resumed"];
+const CHECKPOINT_EVENTS = ["checkpoint:reached", "checkpoint:resumed", "mission:completed", "mission:resumed", "mission:aborted", "mission:deleted"];
 
 /** Checkpoints where a mission is paused, kept current by events (with a slow poll as fallback). */
 export function useActiveCheckpoints(pollMs = 5000) {

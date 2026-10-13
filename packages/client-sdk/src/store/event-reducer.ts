@@ -327,6 +327,10 @@ export function reduceEvent(state: StoreState, sseEvent: SSEEvent): StoreState {
       return { ...next, missions };
     }
 
+    // Aborting cancels the mission (also when it was paused at a checkpoint): refetch it.
+    case "mission:aborted":
+      return { ...next, missionsStale: true };
+
     // ── Approval gates ──────────────────────────────────────
 
     case "approval:requested":

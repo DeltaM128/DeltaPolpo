@@ -39,7 +39,6 @@ import {
 } from "@/components/ui/tooltip";
 import { config } from "@/lib/config";
 import { openWhatsNew } from "@/hooks/use-whats-new-drawer";
-import { useActiveCheckpoints } from "@/components/paused-checkpoints";
 
 type NavItem = { to: string; icon: typeof LayoutDashboard; label: string; external?: boolean };
 type NavSection = { section: string; items: NavItem[] };
@@ -133,10 +132,7 @@ const APPROVAL_EVENTS = ["approval:requested", "approval:resolved", "approval:re
 const PendingBadge = memo(function PendingBadge({ collapsed }: { collapsed: boolean }) {
   const { client, connectionStatus } = usePolpo();
   const { events } = useEvents(APPROVAL_EVENTS, 1);
-  const [approvalCount, setCount] = useState(0);
-  // Missions paused at a checkpoint also wait for someone on the Approvals page.
-  const { active: pausedCheckpoints } = useActiveCheckpoints(30_000);
-  const count = approvalCount + pausedCheckpoints.length;
+  const [count, setCount] = useState(0);
 
   const fetchCount = useCallback(() => {
     if (!client) return;

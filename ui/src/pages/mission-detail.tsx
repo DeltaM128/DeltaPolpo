@@ -13,6 +13,7 @@ import {
   Play,
   RotateCcw,
   XCircle,
+  Trash2,
   X,
   Loader2,
   AlertTriangle,
@@ -70,6 +71,7 @@ import { AppliedRulesPanel } from "@/components/shared/applied-rules-panel";
 import type { AnyRule, ScopedRules } from "@/lib/applied-rules";
 import { useLocalState } from "./coding/use-local-state";
 import { PausedCheckpoints } from "@/components/paused-checkpoints";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   parseMissionData,
   type MissionCheckpointDef,
@@ -1251,6 +1253,8 @@ export interface MissionDetailViewProps {
   onExecute?: () => Promise<unknown>;
   onResume?: () => Promise<unknown>;
   onAbort?: () => Promise<unknown>;
+  /** Delete the mission and its tasks (asks for confirmation first). */
+  onDelete?: () => Promise<unknown>;
 }
 
 export function MissionDetailView({
@@ -1265,6 +1269,7 @@ export function MissionDetailView({
   onExecute,
   onResume,
   onAbort,
+  onDelete,
 }: MissionDetailViewProps) {
   const parsed = useMemo(() => parseMissionData(mission.data), [mission.data]);
 
@@ -1311,6 +1316,7 @@ export function MissionDetailView({
   const hasScheduleInfo = !!(mission.schedule || mission.deadline || mission.endDate || mission.qualityThreshold != null || scheduleEntry);
 
   const [actionPending, setActionPending] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const handleAction = async (action: () => Promise<unknown>, label: string) => {
     if (actionPending) return;
     setActionPending(label);
@@ -1379,12 +1385,38 @@ export function MissionDetailView({
               {actionPending === "Mission resumed" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5 mr-1.5" />} Resume
             </Button>
           )}
-          {mission.status === "active" && onAbort && (
+          {(mission.status === "active" || mission.status === "paused") && onAbort && (
             <Button variant="outline" size="sm" className="text-red-400 hover:text-red-500" disabled={!!actionPending} onClick={() => handleAction(onAbort, "Mission aborted")}>
               {actionPending === "Mission aborted" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5 mr-1.5" />} Abort
             </Button>
           )}
+          {onDelete && (
+            <Button variant="outline" size="sm" className="text-red-400 hover:text-red-500" disabled={!!actionPending} onClick={() => setConfirmDelete(true)}>
+              {actionPending === "Mission deleted" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5 mr-1.5" />} Delete
+            </Button>
+          )}
         </div>
+        {onDelete && (
+          <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Delete mission "{mission.name}"?</DialogTitle>
+                <DialogDescription>
+                  Its tasks are stopped and deleted, with their results in the dashboard. Files the agents wrote in the project stay. This cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => { setConfirmDelete(false); void handleAction(onDelete, "Mission deleted"); }}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       {/* Scheduling info strip */}
@@ -1769,13 +1801,14 @@ function MissionAppliedRules({ mission }: { mission: Mission }) {
 export function MissionDetailPage() {
   const { missionId } = useParams<{ missionId: string }>();
   const navigate = useNavigate();
-  const { mission, report, isLoading, error, executeMission, resumeMission, abortMission } = useMission(missionId ?? "");
+  const { mission, report, isLoading, error, executeMission, resumeMission, abortMission, deleteMission } = useMission(missionId ?? "");
   const { tasks: allTasks } = useTasks();
   const { schedules } = useSchedules();
   const { activeDelays: liveDelays } = useActiveDelays();
 
+  // Only this mission's tasks: missions created before names were unique can share a group.
   const groupTasks = useMemo(
-    () => mission ? allTasks.filter(t => t.group === mission.name) : [],
+    () => mission ? allTasks.filter(t => t.group === mission.name && (!t.missionId || t.missionId === mission.id)) : [],
     [allTasks, mission],
   );
 
@@ -1820,6 +1853,7 @@ export function MissionDetailPage() {
         onExecute={executeMission}
         onResume={() => resumeMission()}
         onAbort={abortMission}
+        onDelete={async () => { await deleteMission(); navigate("/missions"); }}
       />
     </div>
   );

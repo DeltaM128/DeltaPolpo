@@ -46,6 +46,26 @@ class InMemoryDelayStore implements DelayStore {
   }
 }
 
+const RUN_KEY_SEPARATOR = "\u0000";
+
+/** One run of a mission: its task group plus its mission id (recurring runs share the id). */
+function runKey(task: Task): string {
+  return `${task.group}${RUN_KEY_SEPARATOR}${task.missionId ?? ""}`;
+}
+
+/** Tasks with a group, by run, in first-appearance order (tasks keep snapshot order). */
+function groupByRun(tasks: Task[]): Map<string, Task[]> {
+  const runs = new Map<string, Task[]>();
+  for (const t of tasks) {
+    if (!t.group) continue;
+    const key = runKey(t);
+    const list = runs.get(key);
+    if (list) list.push(t);
+    else runs.set(key, [t]);
+  }
+  return runs;
+}
+
 /**
  * Mission CRUD + execution + resume + group lifecycle.
  */
@@ -61,6 +81,7 @@ export interface MissionEdit {
 export const MISSION_EDIT: unique symbol = Symbol.for("polpo.missionEdit") as never;
 
 export class MissionExecutor {
+  /** Finished runs, keyed by run (see runKey): their mission status is already final. */
   private cleanedGroups = new Set<string>();
   /** Quality gates parsed from mission documents, keyed by mission group name */
   private gatesByGroup = new Map<string, MissionQualityGate[]>();
@@ -111,15 +132,22 @@ export class MissionExecutor {
   /** Async init: rebuild cleanedGroups from persisted task state. */
   private async rebuildCleanedGroups(): Promise<void> {
     const allTasks = await this.ctx.registry.getAllTasks();
-    const groups = new Set<string>();
-    for (const t of allTasks) {
-      if (t.group) groups.add(t.group);
+    for (const [key, runTasks] of groupByRun(allTasks)) {
+      if (!runTasks.every(t => t.status === "done" || t.status === "failed")) continue;
+      // A run whose tasks all ended while its mission is still active was never closed (e.g. it
+      // shared its group with another mission): leave it to cleanupCompletedGroups to close now.
+      const mid = runTasks[0].missionId;
+      const mission = mid ? await this.ctx.registry.getMission?.(mid) : undefined;
+      if (mission && (mission.status === "active" || mission.status === "paused")) continue;
+      this.cleanedGroups.add(key);
     }
-    for (const group of groups) {
-      const groupTasks = allTasks.filter(t => t.group === group);
-      if (groupTasks.every(t => t.status === "done" || t.status === "failed")) {
-        this.cleanedGroups.add(group);
-      }
+  }
+
+  /** Forget the finished runs of a mission group (and of its numbered recurring runs). */
+  private forgetCleanedGroup(group: string): void {
+    for (const key of this.cleanedGroups) {
+      const keyGroup = key.slice(0, key.indexOf(RUN_KEY_SEPARATOR));
+      if (keyGroup === group || keyGroup.startsWith(group + " #")) this.cleanedGroups.delete(key);
     }
   }
 
@@ -261,6 +289,12 @@ export class MissionExecutor {
     });
 
     return true;
+  }
+
+  /** Drop a group's checkpoint and delay state (its mission was aborted). */
+  async releaseGroupFlow(group: string): Promise<void> {
+    this.cpState = await this.cpStore.removeGroup(this.cpState, group);
+    this.delayState = await this.delayStore.removeGroup(this.delayState, group);
   }
 
   /** Get all active (unresumed) checkpoints across all mission groups. */
@@ -499,8 +533,9 @@ export class MissionExecutor {
 
     // 1. Kill running processes and remove all tasks belonging to this mission
     const missionGroup = mission.name;
+    // Tasks of other missions with the same name (created before names were unique) stay.
     const deletedTasks = await this.taskMgr.clearTasks(
-      t => t.missionId === missionId || t.group === missionGroup,
+      t => t.missionId === missionId || (!t.missionId && t.group === missionGroup),
     );
 
     // 2. Clean up volatile agents registered for this mission group
@@ -536,10 +571,7 @@ export class MissionExecutor {
     }
 
     // 6. Allow re-cleanup if the group is ever recreated
-    this.cleanedGroups.delete(missionGroup);
-    for (const key of this.cleanedGroups) {
-      if (key.startsWith(missionGroup + " #")) this.cleanedGroups.delete(key);
-    }
+    this.forgetCleanedGroup(missionGroup);
 
     // ── Delete the mission record ────────────────────────
     const result = await this.ctx.registry.deleteMission(missionId);
@@ -568,7 +600,7 @@ export class MissionExecutor {
     if (!mission) throw new Error("Mission not found");
 
     // Re-register volatile agents if they were cleaned up
-    this.cleanedGroups.delete(mission.name);
+    this.forgetCleanedGroup(mission.name);
     const enableVolatile = this.ctx.config.settings.enableVolatileTeams !== false;
     if (enableVolatile && mission.data) {
       try {
@@ -759,33 +791,27 @@ export class MissionExecutor {
 
   /** Check if any mission groups have all tasks terminal, and clean up their volatile agents */
   async cleanupCompletedGroups(tasks: Task[]): Promise<void> {
-    // One pass instead of a filter per group (runs every tick over all tasks); groups keep
-    // first-appearance order and their tasks keep snapshot order.
-    const tasksByGroup = new Map<string, Task[]>();
-    for (const t of tasks) {
-      if (!t.group) continue;
-      const groupTasks = tasksByGroup.get(t.group);
-      if (groupTasks) groupTasks.push(t);
-      else tasksByGroup.set(t.group, [t]);
-    }
-    for (const [group, groupTasks] of tasksByGroup) {
+    // One pass per run (a group and its mission): two missions sharing a name (created before
+    // names were unique) are closed separately, each with its own tasks.
+    for (const [runKeyValue, groupTasks] of groupByRun(tasks)) {
+      const group = groupTasks[0].group!;
       const allTerminal = groupTasks.every(t => t.status === "done" || t.status === "failed");
 
       // If tasks went back to non-terminal (e.g. individual retry via retryTask),
       // clear the cleaned flag so the group will be re-evaluated when done again.
-      if (!allTerminal && this.cleanedGroups.has(group)) {
-        this.cleanedGroups.delete(group);
+      if (!allTerminal && this.cleanedGroups.has(runKeyValue)) {
+        this.cleanedGroups.delete(runKeyValue);
         continue;
       }
 
-      if (this.cleanedGroups.has(group)) continue;
+      if (this.cleanedGroups.has(runKeyValue)) continue;
       if (!allTerminal) continue;
 
       const cleanupPolicy = this.ctx.config.settings.volatileCleanup ?? "on_complete";
       if (cleanupPolicy === "on_complete") {
         await this.agentMgr.cleanupVolatileAgents(group);
       }
-      this.cleanedGroups.add(group);
+      this.cleanedGroups.add(runKeyValue);
 
       // Auto-update mission status
       const mission = await this.resolveMissionForGroup(groupTasks, group);

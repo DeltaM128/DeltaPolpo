@@ -375,7 +375,7 @@ export function missionRoutes(getDeps: () => {
   deleteMission: (id: string) => Promise<boolean>;
   executeMission: (id: string) => Promise<any>;
   resumeMission: (id: string, opts?: any) => Promise<any>;
-  abortGroup: (group: string) => Promise<number>;
+  abortGroup: (group: string, missionId?: string) => Promise<number>;
   getActiveCheckpoints: () => any;
   resumeCheckpointByMissionId: (missionId: string, checkpointName: string) => Promise<boolean>;
   getActiveDelays: () => any;
@@ -553,7 +553,7 @@ export function missionRoutes(getDeps: () => {
     if (!mission) {
       return c.json({ ok: false, error: "Mission not found", code: "NOT_FOUND" }, 404);
     }
-    const count = await deps.abortGroup(mission.name);
+    const count = await deps.abortGroup(mission.name, missionId);
     return c.json({ ok: true, data: { aborted: count } }, 200);
   });
 
