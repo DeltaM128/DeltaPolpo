@@ -60,11 +60,12 @@ import type { RunRecord } from "./run-store.js";
 import { setProviderOverrides, validateProviderKeys, setModelAllowlist } from "../llm/pi-client.js";
 import { refreshCustomProviderSecretStatus, setProviderSecretsSource } from "../llm/custom-providers.js";
 import { readProviderSecrets } from "../llm/provider-secrets.js";
-import { startNotificationServer, getSocketPath } from "./notification.js";
+import { startNotificationServer, getSocketPath, type PipelineHumanMessage, type PipelineHumanReply } from "./notification.js";
 import { createBrowserNetworkGuard, type BrowserNetworkGuard } from "../tools/browser-network-guard.js";
 import { NetworkDeniedLog, type NetworkDeniedReport } from "../sandbox/denied-log.js";
 import { HookRegistry } from "./hooks.js";
 import { ApprovalManager } from "./approval-manager.js";
+import { PIPELINE_GATE_PREFIX } from "@polpo-ai/core/approval-manager";
 import { FileApprovalStore } from "../stores/file-approval-store.js";
 import { NotificationRouter } from "../notifications/index.js";
 import { FileNotificationStore } from "../stores/file-notification-store.js";
@@ -1048,10 +1049,12 @@ export class Orchestrator extends TypedEmitter {
         host: msg.host, port: msg.port, reason: msg.reason,
       }),
       (msg) => this.reportRemoteSandboxEvent(msg.event as any, { workspaceId: msg.runId, provider: msg.provider, taskId: msg.taskId, agentName: msg.agentName }),
+      (msg) => this.handlePipelineHuman(msg),
     );
 
-    // Initialize approval gates if configured
-    if (this.config.settings.approvalGates && this.config.settings.approvalGates.length > 0) {
+    // Approval manager: always present, because pipeline `human` steps request approvals
+    // even without configured gates. init() only registers the configured gates.
+    {
       const approvalStore = ctx.approvalStore ?? new FileApprovalStore(this.polpoDir);
       this.approvalMgr = new ApprovalManager(ctx, approvalStore);
       this.approvalMgr.init();
@@ -1098,7 +1101,7 @@ export class Orchestrator extends TypedEmitter {
     }
 
     // Wire notification router to approval manager (must happen after both are created)
-    if (this.approvalMgr && this.notificationRouter) {
+    if (this.approvalMgr && this.hasApprovalGates() && this.notificationRouter) {
       this.approvalMgr.setNotificationRouter(this.notificationRouter);
 
       // Set outcome resolver so approval notifications can include task outcomes
@@ -1123,7 +1126,7 @@ export class Orchestrator extends TypedEmitter {
 
     // Initialize escalation manager if configured
     if (this.config.settings.escalationPolicy) {
-      this.escalationMgr = new EscalationManager(ctx, this.approvalMgr);
+      this.escalationMgr = new EscalationManager(ctx, this.hasApprovalGates() ? this.approvalMgr : undefined);
       this.escalationMgr.init();
     }
 
@@ -1987,8 +1990,8 @@ export class Orchestrator extends TypedEmitter {
 
     // 4. Re-initialize optional subsystems from new config
 
-    // Approval gates
-    if (this.config.settings.approvalGates && this.config.settings.approvalGates.length > 0) {
+    // Approval manager (always present, see init)
+    {
       const approvalStore = this.drizzleStores?.approvalStore ?? new FileApprovalStore(this.polpoDir);
       this.approvalMgr = new ApprovalManager(ctx, approvalStore);
       this.approvalMgr.init();
@@ -2030,7 +2033,7 @@ export class Orchestrator extends TypedEmitter {
     }
 
     // Wire notification router to approval manager
-    if (this.approvalMgr && this.notificationRouter) {
+    if (this.approvalMgr && this.hasApprovalGates() && this.notificationRouter) {
       this.approvalMgr.setNotificationRouter(this.notificationRouter);
       this.notificationRouter.setOutcomeResolver(async (taskId: string) => {
         const task = await this.registry.getTask(taskId);
@@ -2051,7 +2054,7 @@ export class Orchestrator extends TypedEmitter {
 
     // Escalation manager
     if (this.config.settings.escalationPolicy) {
-      this.escalationMgr = new EscalationManager(ctx, this.approvalMgr);
+      this.escalationMgr = new EscalationManager(ctx, this.hasApprovalGates() ? this.approvalMgr : undefined);
       this.escalationMgr.init();
     }
 
@@ -2252,6 +2255,49 @@ export class Orchestrator extends TypedEmitter {
     }
 
     this.emit("log", { level: "info", message: `Telegram callback poller started (${usedTokens.size} bot${usedTokens.size === 1 ? "" : "s"})` });
+  }
+
+  /**
+   * A running pipeline asks for (or polls) a human decision. The request is a
+   * regular approval (Approvals page, /approve, API) with a "pipeline:" gate id,
+   * so resolving it does not change the task's status: the runner reads the
+   * decision and continues or fails the pipeline itself.
+   */
+  private async handlePipelineHuman(msg: PipelineHumanMessage): Promise<PipelineHumanReply> {
+    const mgr = this.approvalMgr;
+    if (!mgr) return { ok: false, error: "Approvals are not available yet" };
+
+    if (msg.type === "pipeline_human_status") {
+      const request = await mgr.getRequest(msg.requestId);
+      if (!request) return { ok: false, error: "Unknown request" };
+      return { ok: true, status: request.status, note: request.note };
+    }
+
+    if (!(await mgr.getRequest(msg.requestId))) {
+      const task = await this.registry.getTask(msg.taskId);
+      await mgr.requestHumanApproval({
+        id: msg.requestId,
+        gateId: `${PIPELINE_GATE_PREFIX}${msg.agentName}:${msg.step}`,
+        gateName: `${msg.agentName} · ${msg.step}`,
+        taskId: msg.taskId,
+        missionId: task?.missionId,
+        payload: { kind: "pipeline_human", runId: msg.runId, agentName: msg.agentName, step: msg.step, taskTitle: task?.title, context: msg.context },
+      });
+      for (const channel of msg.notify ?? []) {
+        this.notificationRouter?.sendDirect({
+          channel,
+          title: `Approval needed: ${msg.step}`,
+          body: `Agent "${msg.agentName}" is waiting for "${msg.step}"${task ? ` on task "${task.title}"` : ""}. Approve or reject it from the Approvals page.`,
+          severity: "warning",
+        }).catch((err) => this.emit("log", { level: "warn", message: `[pipeline] notify "${channel}" failed: ${err instanceof Error ? err.message : String(err)}` }));
+      }
+    }
+    return { ok: true, status: "pending" };
+  }
+
+  /** Whether approval gates are configured (the approval manager itself always exists). */
+  private hasApprovalGates(): boolean {
+    return (this.config.settings.approvalGates?.length ?? 0) > 0;
   }
 
   /** Approve/reject through the approval manager, for channel commands and buttons. */
