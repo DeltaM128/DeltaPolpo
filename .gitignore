@@ -69,3 +69,4 @@ ui/.env
 docs-backup/
 website/dist-server/
 website/data/
+.deltapolpo-tools/

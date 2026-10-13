@@ -8,9 +8,14 @@ import { homedir } from "node:os";
 import http from "node:http";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PORT = 3890;
+// DeltaPolpo runs next to an original Polpo desktop install without touching it: its own port
+// (the app attaches to any server already answering on it), its own settings folder, and no
+// auto-update (upstream releases would replace DeltaPolpo with Polpo).
+const APP_NAME = "DeltaPolpo";
+const SERVER_PORT = 3891;
+const AUTO_UPDATE = false;
 const HEALTH_URL = `http://localhost:${SERVER_PORT}/api/v1/health`;
-const CONFIG_DIR = join(homedir(), ".polpo-desktop");
+const CONFIG_DIR = join(homedir(), ".deltapolpo-desktop");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
 let serverProcess = null;
@@ -79,7 +84,7 @@ async function resolveWorkDir() {
   // 3. First launch — ask the user
   const result = await dialog.showOpenDialog({
     title: "Select your project directory",
-    message: "Choose the directory where Polpo should work",
+    message: `Choose the directory where ${APP_NAME} should work`,
     properties: ["openDirectory", "createDirectory"],
     defaultPath: homedir(),
   });
@@ -146,8 +151,8 @@ async function ensureServer(workDir) {
   if (!binary) {
     console.error("[Polpo] Server binary not found");
     showError(
-      "Polpo Server Not Found",
-      "Could not find the Polpo server binary. Please reinstall the application."
+      `${APP_NAME} Server Not Found`,
+      `Could not find the ${APP_NAME} server binary. Please reinstall the application.`
     );
     return false;
   }
@@ -200,7 +205,7 @@ async function ensureServer(workDir) {
   const ready = await waitForServer(30, () => exitCode !== null);
   if (!ready) {
     console.error("[Polpo] Server failed to start");
-    const reason = exitCode !== null ? `The Polpo server exited with code ${exitCode}.` : "The Polpo server did not start in time.";
+    const reason = exitCode !== null ? `The ${APP_NAME} server exited with code ${exitCode}.` : `The ${APP_NAME} server did not start in time.`;
     const lastLines = output.trim().split(/\r?\n/).slice(-12).join("\n");
     showError(
       "Server Start Failed",
@@ -235,7 +240,7 @@ function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    title: "Polpo",
+    title: APP_NAME,
     icon: join(__dirname, "..", "dist", "icons", "icon-512.png"),
     autoHideMenuBar: true,
     webPreferences: {
@@ -412,7 +417,7 @@ app.whenReady().then(async () => {
   createWindow();
 
   // Check for updates after window is up (non-blocking)
-  if (!SMOKE_RESULT) setupAutoUpdater();
+  if (!SMOKE_RESULT && AUTO_UPDATE) setupAutoUpdater();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

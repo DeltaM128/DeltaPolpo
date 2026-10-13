@@ -20,7 +20,8 @@
     "preview": "vite preview",
     "serve": "node server.mjs",
     "electron:dev": "POLPO_ELECTRON=1 VITE_POLPO_API_URL=http://localhost:3890 vite build && electron .",
-    "electron:build": "POLPO_ELECTRON=1 VITE_POLPO_API_URL=http://localhost:3890 vite build && electron-builder"
+    "electron:build": "POLPO_ELECTRON=1 VITE_POLPO_API_URL=http://localhost:3890 vite build && electron-builder",
+    "deltapolpo:installer": "powershell -ExecutionPolicy Bypass -File ../scripts/build-deltapolpo-installer.ps1"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.88",
@@ -88,8 +89,8 @@
     "vite-plugin-pwa": "^1.2.0"
   },
   "build": {
-    "appId": "ai.polpo.desktop",
-    "productName": "Polpo",
+    "appId": "sh.polpo.deltapolpo",
+    "productName": "DeltaPolpo",
     "icon": "build/icon.png",
     "directories": {
       "output": "release"
@@ -127,12 +128,15 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "artifactName": "DeltaPolpo-Setup-${version}.${ext}"
     },
-    "publish": {
-      "provider": "github",
-      "owner": "alemicali",
-      "repo": "polpo-zhc"
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "DeltaPolpo",
+      "uninstallDisplayName": "DeltaPolpo"
     }
   }
 }
