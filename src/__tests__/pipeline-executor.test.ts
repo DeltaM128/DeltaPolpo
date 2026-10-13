@@ -202,6 +202,27 @@ describe("executePipeline", () => {
     expect(slowSignal?.aborted).toBe(true);
   });
 
+  it("reports step paths that match the pipeline object, and cancelled branches", async () => {
+    const { deps, events } = makeDeps({
+      fast: () => ({ ok: true }),
+      slow: (req) => new Promise((resolve) => req.signal.addEventListener("abort", () => resolve({ ok: false, error: "killed" }))),
+      a: () => ({ ok: true }),
+    });
+    await executePipeline(
+      { steps: [
+        { parallel: [{ loop: "slow" }, { loop: "fast" }], join: "any" },
+        { switch: { cases: [{ when: "false", steps: [{ loop: "a" }] }], default: { steps: [{ loop: "a" }] } } },
+      ] },
+      { fast: {}, slow: {}, a: {} },
+      deps,
+    );
+    const seen = events.filter((e) => e.type !== "loop:attempt").map((e) => `${e.type} ${e.path}`);
+    expect(seen).toContain("step:end steps.0.parallel.1");
+    expect(seen).toContain("step:cancel steps.0.parallel.0");
+    expect(seen).toContain("step:end steps.1.switch.default.steps.0");
+    expect(seen).not.toContain("step:start steps.1.switch.cases.0.steps.0");
+  });
+
   it("parallel join=all fails when one branch fails", async () => {
     const { deps } = makeDeps({ a: () => ({ ok: true }), b: () => ({ ok: false, error: "boom" }) });
     const result = await executePipeline({ steps: [{ parallel: [{ loop: "a" }, { loop: "b" }] }] }, { a: {}, b: {} }, deps);

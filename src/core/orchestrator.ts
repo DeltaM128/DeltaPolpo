@@ -1188,6 +1188,14 @@ export class Orchestrator extends TypedEmitter {
     if (this.learningRunner) this.learningMgr.setRunner(this.learningRunner);
     this.on("message:added", ({ sessionId }) => { void this.learningMgr?.onMessageAdded(sessionId); });
 
+    // A pipeline waiting on a person stops with its task (kill, crash, timeout). The runner
+    // cannot always say so (on Windows a kill ends it at once): close its open requests here.
+    this.on("task:transition", ({ taskId, to }) => {
+      if (to === "in_progress") return;
+      void this.closePipelineApprovals(taskId, to).catch((err) =>
+        this.emit("log", { level: "warn", message: `[pipeline] closing approvals of ${taskId} failed: ${err instanceof Error ? err.message : String(err)}` }));
+    });
+
     if (supportsBackgroundWaits(this.taskControlStore)) {
       this.backgroundWaitMgr = new BackgroundWaitManager(this, this.registry, this.taskControlStore);
       await this.backgroundWaitMgr.start();
@@ -2267,6 +2275,14 @@ export class Orchestrator extends TypedEmitter {
     const mgr = this.approvalMgr;
     if (!mgr) return { ok: false, error: "Approvals are not available yet" };
 
+    if (msg.type === "pipeline_human_cancel") {
+      const request = await mgr.getRequest(msg.requestId);
+      if (request?.status === "pending") {
+        await mgr.reject(msg.requestId, "Cancelled: the pipeline no longer needs this decision", "system");
+      }
+      return { ok: true };
+    }
+
     if (msg.type === "pipeline_human_status") {
       const request = await mgr.getRequest(msg.requestId);
       if (!request) return { ok: false, error: "Unknown request" };
@@ -2293,6 +2309,16 @@ export class Orchestrator extends TypedEmitter {
       }
     }
     return { ok: true, status: "pending" };
+  }
+
+  /** Reject the pending pipeline approvals of a task that is no longer running. */
+  private async closePipelineApprovals(taskId: string, status: string): Promise<void> {
+    const mgr = this.approvalMgr;
+    if (!mgr) return;
+    const pending = (await mgr.getPending()).filter((r) => r.taskId === taskId && r.gateId.startsWith(PIPELINE_GATE_PREFIX));
+    for (const request of pending) {
+      await mgr.reject(request.id, `Cancelled: the task is no longer running (${status})`, "system");
+    }
   }
 
   /** Whether approval gates are configured (the approval manager itself always exists). */

@@ -68,7 +68,13 @@ export interface PipelineHumanStatusMessage {
   requestId: string;
 }
 
-export type PipelineHumanMessage = PipelineHumanRequestMessage | PipelineHumanStatusMessage;
+/** The pipeline no longer waits for this decision (run cancelled, parallel join decided). */
+export interface PipelineHumanCancelMessage {
+  type: "pipeline_human_cancel";
+  requestId: string;
+}
+
+export type PipelineHumanMessage = PipelineHumanRequestMessage | PipelineHumanStatusMessage | PipelineHumanCancelMessage;
 
 export interface PipelineHumanReply {
   ok: boolean;
@@ -104,7 +110,7 @@ export function startNotificationServer(
       if (answered || newline < 0) return;
       let msg: { type?: string };
       try { msg = JSON.parse(buffer.slice(0, newline)); } catch { return; }
-      if (msg.type !== "pipeline_human_request" && msg.type !== "pipeline_human_status") return;
+      if (msg.type !== "pipeline_human_request" && msg.type !== "pipeline_human_status" && msg.type !== "pipeline_human_cancel") return;
       answered = true;
       const reply = onPipelineHuman
         ? onPipelineHuman(msg as PipelineHumanMessage).catch((err): PipelineHumanReply => ({ ok: false, error: err instanceof Error ? err.message : String(err) }))

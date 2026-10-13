@@ -316,6 +316,38 @@ export interface AgentSuggestionConfig {
   description?: string;
 }
 
+/** Live state of a pipeline run (see docs/loops.md), carried in the run activity. */
+export type PipelineStepStatus = "running" | "waiting" | "done" | "failed" | "skipped" | "cancelled";
+
+export interface PipelineStepState {
+  kind: "loop" | "parallel" | "switch" | "human";
+  name?: string;
+  status: PipelineStepStatus;
+  /** Current or last attempt of a loop. */
+  attempt?: number;
+  /** Why the previous loop attempt was not accepted. */
+  feedback?: string;
+  error?: string;
+  /** Human steps: the approval request being waited on. */
+  approvalId?: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface PipelineRunState {
+  status: "running" | "completed" | "failed";
+  /** The pipeline as it was when the run started, so the view matches what ran. */
+  pipeline: Pipeline;
+  /** Step states keyed by step path, e.g. "steps.1.switch.cases.0.steps.0". */
+  steps: Record<string, PipelineStepState>;
+  /** Shared context bag (omitted when too large to carry live). */
+  context?: Record<string, unknown>;
+  contextTruncated?: boolean;
+  error?: string;
+  startedAt: string;
+  endedAt?: string;
+}
+
 export interface AgentActivity {
   lastTool?: string;
   lastFile?: string;
@@ -326,6 +358,8 @@ export interface AgentActivity {
   lastUpdate: string;
   summary?: string;
   sessionId?: string;
+  /** Live state of the pipeline, when the agent runs one. */
+  pipeline?: PipelineRunState;
 }
 
 export interface AgentProcess {

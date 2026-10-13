@@ -61,6 +61,7 @@ export function createHumanRelay(opts: HumanRelayOptions): (req: HumanRequest) =
     if (req.signal.aborted) return { approved: false, note: "cancelled" };
     if (!created) throw new Error(`Could not request approval for "${req.name}": ${lastError}`);
     opts.log?.(`Waiting for a human decision on "${req.name}" (approval ${requestId})`);
+    req.onRequested?.(requestId);
 
     // Poll until resolved. An unreachable orchestrator (restart) is retried.
     while (!req.signal.aborted) {
@@ -76,6 +77,8 @@ export function createHumanRelay(opts: HumanRelayOptions): (req: HumanRequest) =
         opts.log?.(`Approval status check failed (will retry): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    // Nobody needs this decision anymore: close the request instead of leaving it pending.
+    askPipelineHuman(opts.socketPath, { type: "pipeline_human_cancel", requestId }).catch(() => { /* best effort */ });
     return { approved: false, note: "cancelled" };
   };
 }

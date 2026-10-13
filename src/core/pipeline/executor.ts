@@ -14,6 +14,10 @@
  *     as `{ approved, note }`.
  *   - `when` guards and `stopWhen` conditions read from it.
  *
+ * Step paths match the pipeline object (and the editor): "steps.0",
+ * "steps.1.parallel.0", "steps.2.switch.cases.0.steps.1",
+ * "steps.2.switch.default.steps.0".
+ *
  * Loop iterations: a loop runs once; if its output does not match
  * `output.schema` or its `stopWhen` condition is still false, it runs again
  * with feedback explaining why, up to `maxLoopAttempts` times in total.
@@ -58,8 +62,12 @@ export interface LoopRunResult {
 export interface HumanRequest {
   name: string;
   step: HumanStep;
+  /** Path of the human step. */
+  path: string;
   context: PipelineContext;
   signal: AbortSignal;
+  /** Called once the approval request exists, with its id. */
+  onRequested?(approvalId: string): void;
 }
 
 export interface HumanDecision {
@@ -71,6 +79,9 @@ export type PipelineEvent =
   | { type: "step:start"; path: string; kind: StepKind; name?: string }
   | { type: "step:skip"; path: string; kind: StepKind; name?: string }
   | { type: "step:end"; path: string; kind: StepKind; name?: string; ok: boolean; error?: string }
+  /** The step was stopped before finishing: the run was cancelled or a parallel join was already decided. */
+  | { type: "step:cancel"; path: string; kind: StepKind; name?: string }
+  | { type: "human:requested"; path: string; name: string; approvalId: string }
   | { type: "loop:attempt"; path: string; loop: string; attempt: number; feedback?: string };
 
 export type StepKind = "loop" | "parallel" | "switch" | "human";
@@ -174,14 +185,13 @@ export async function executePipeline(
     deps.onEvent?.({ type: "step:start", path, kind, name });
     try {
       if ("loop" in step) await runLoopStep(step, path, s);
-      else if ("parallel" in step) await runParallel(step, path, s);
+      else if ("parallel" in step) await runBranches(step.parallel, (i) => `${path}.parallel.${i}`, step.join, s);
       else if ("switch" in step) await runSwitch(step, path, s);
-      else await runHuman(step, s);
+      else await runHuman(step, path, s);
       deps.onEvent?.({ type: "step:end", path, kind, name, ok: true });
     } catch (err) {
-      if (!(err instanceof Cancelled)) {
-        deps.onEvent?.({ type: "step:end", path, kind, name, ok: false, error: err instanceof Error ? err.message : String(err) });
-      }
+      if (err instanceof Cancelled) deps.onEvent?.({ type: "step:cancel", path, kind, name });
+      else deps.onEvent?.({ type: "step:end", path, kind, name, ok: false, error: err instanceof Error ? err.message : String(err) });
       throw err;
     }
   }
@@ -227,12 +237,11 @@ export async function executePipeline(
     throw new StepFailure(`Loop "${step.loop}" did not finish after ${maxAttempts} attempts: ${feedback}`);
   }
 
-  async function runParallel(step: ParallelStep, path: string, s: AbortSignal): Promise<void> {
-    const branches = step.parallel;
+  async function runBranches(branches: PipelineStep[], pathOf: (i: number) => string, join: ParallelStep["join"], s: AbortSignal): Promise<void> {
     const total = branches.length;
-    const needed = step.join === undefined || step.join === "all" ? total
-      : step.join === "any" ? 1
-      : Math.min(step.join, total);
+    const needed = join === undefined || join === "all" ? total
+      : join === "any" ? 1
+      : Math.min(join, total);
 
     // Each branch gets its own controller so the losers can be stopped once
     // the join is satisfied (or can no longer be).
@@ -254,7 +263,7 @@ export async function executePipeline(
           fn();
         };
         branches.forEach((branch, i) => {
-          runStep(branch, `${path}.${i}`, controllers[i].signal).then(
+          runStep(branch, pathOf(i), controllers[i].signal).then(
             () => {
               succeeded++;
               if (succeeded >= needed) finish(resolve);
@@ -281,15 +290,22 @@ export async function executePipeline(
     const cases = step.switch.cases;
     for (let i = 0; i < cases.length; i++) {
       if (condition(cases[i].when, context)) {
-        await runSteps(cases[i].steps, `${path}.case${i}`, s);
+        await runSteps(cases[i].steps, `${path}.switch.cases.${i}.steps`, s);
         return;
       }
     }
-    if (step.switch.default) await runSteps(step.switch.default.steps, `${path}.default`, s);
+    if (step.switch.default) await runSteps(step.switch.default.steps, `${path}.switch.default.steps`, s);
   }
 
-  async function runHuman(step: HumanStep, s: AbortSignal): Promise<void> {
-    const decision = await deps.requestHuman({ name: step.human, step, context: structuredClone(context), signal: s });
+  async function runHuman(step: HumanStep, path: string, s: AbortSignal): Promise<void> {
+    const decision = await deps.requestHuman({
+      name: step.human,
+      step,
+      path,
+      context: structuredClone(context),
+      signal: s,
+      onRequested: (approvalId) => deps.onEvent?.({ type: "human:requested", path, name: step.human, approvalId }),
+    });
     checkCancelled(s);
     setIn(context, "human", step.human, { approved: decision.approved, note: decision.note });
     if (!decision.approved) {
@@ -298,10 +314,8 @@ export async function executePipeline(
   }
 
   try {
-    const steps: PipelineStep[] = pipeline.mode === "parallel"
-      ? [{ parallel: pipeline.steps, join: "all" }]
-      : pipeline.steps;
-    await runSteps(steps, "steps", signal);
+    if (pipeline.mode === "parallel") await runBranches(pipeline.steps, (i) => `steps.${i}`, "all", signal);
+    else await runSteps(pipeline.steps, "steps", signal);
     return { ok: true, context };
   } catch (err) {
     return { ok: false, context, error: err instanceof Error ? err.message : String(err) };

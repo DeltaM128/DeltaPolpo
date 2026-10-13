@@ -106,9 +106,16 @@ describe("pipeline adapter", () => {
       () => ({ exitCode: 0, outcomes: [outcome("Refund receipt", null, "file")] }),
     ]);
     const humans: string[] = [];
-    const handle = spawnPipeline(agent, task, "/work", { polpoDir: "/p" }, {
+    let waitingState: unknown;
+    const handle: AgentHandle = spawnPipeline(agent, task, "/work", { polpoDir: "/p" }, {
       spawn,
-      requestHuman: async (req) => { humans.push(`${req.name}:${req.step.notify?.join(",")}`); return { approved: true }; },
+      requestHuman: async (req) => {
+        humans.push(`${req.name}:${req.step.notify?.join(",")}`);
+        // Mid-run, the human step shows as waiting on its approval.
+        req.onRequested?.("appr-1");
+        waitingState = handle.activity.pipeline?.steps[req.path];
+        return { approved: true };
+      },
     });
     const transcript: Record<string, unknown>[] = [];
     handle.onTranscript = (e) => transcript.push(e);
@@ -122,6 +129,16 @@ describe("pipeline adapter", () => {
     expect(handle.activity.toolCalls).toBe(4);
     expect(result.stdout).toContain('"category": "billing"');
     expect(transcript.some((e) => e.type === "pipeline" && String(e.text).includes("Pipeline completed"))).toBe(true);
+
+    expect(waitingState).toMatchObject({ kind: "human", status: "waiting", approvalId: "appr-1" });
+    const state = handle.activity.pipeline!;
+    expect(state).toMatchObject({ status: "completed", context: { ticket: { category: "billing" } } });
+    expect(state.pipeline).toEqual(agent.pipeline);
+    expect(state.steps["steps.0"]).toMatchObject({ kind: "loop", name: "triage", status: "done", attempt: 1 });
+    expect(state.steps["steps.1"]).toMatchObject({ kind: "switch", status: "done" });
+    expect(state.steps["steps.1.switch.cases.0.steps.0"]).toMatchObject({ kind: "human", status: "done", approvalId: "appr-1" });
+    expect(state.steps["steps.1.switch.cases.0.steps.1"]).toMatchObject({ kind: "loop", status: "done" });
+    expect(state.steps["steps.1.switch.default.steps.0"]).toBeUndefined();
   });
 
   it("fails the task when a loop session fails", async () => {
@@ -161,6 +178,7 @@ describe("human relay over the notification socket", () => {
     const decision = await relay({
       name: "refund_ok",
       step: { human: "refund_ok", notify: ["ops"] },
+      path: "steps.0",
       context: { ticket: { category: "billing" } },
       signal: new AbortController().signal,
     });
@@ -170,10 +188,35 @@ describe("human relay over the notification socket", () => {
     expect(created.msg).toMatchObject({ type: "pipeline_human_request", taskId: "t1", step: "refund_ok", notify: ["ops"] });
   });
 
+  it("closes the approval request when the step is cancelled", async () => {
+    dir = mkdtempSync(join(tmpdir(), "polpo-pipeline-"));
+    const seen: string[] = [];
+    server = startNotificationServer(dir, () => {}, undefined, undefined, async (msg): Promise<PipelineHumanReply> => {
+      seen.push(msg.type);
+      return { ok: true, status: "pending" };
+    });
+    await new Promise((r) => server!.once("listening", r));
+
+    const controller = new AbortController();
+    const relay = createHumanRelay({ socketPath: getSocketPath(dir), runId: "r1", taskId: "t1", agentName: "a", pollMs: 10 });
+    const decision = relay({
+      name: "x",
+      step: { human: "x" },
+      path: "steps.0",
+      context: {},
+      signal: controller.signal,
+      onRequested: () => setTimeout(() => controller.abort(), 20),
+    });
+    expect(await decision).toEqual({ approved: false, note: "cancelled" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(seen[0]).toBe("pipeline_human_request");
+    expect(seen).toContain("pipeline_human_cancel");
+  });
+
   it("fails clearly when the orchestrator is unreachable", async () => {
     dir = mkdtempSync(join(tmpdir(), "polpo-pipeline-"));
     const relay = createHumanRelay({ socketPath: getSocketPath(dir), runId: "r1", taskId: "t1", agentName: "a", pollMs: 5, requestAttempts: 2 });
-    await expect(relay({ name: "x", step: { human: "x" }, context: {}, signal: new AbortController().signal }))
+    await expect(relay({ name: "x", step: { human: "x" }, path: "steps.0", context: {}, signal: new AbortController().signal }))
       .rejects.toThrow('Could not request approval for "x"');
   });
 });

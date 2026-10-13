@@ -12,7 +12,7 @@
  */
 
 import { nanoid } from "nanoid";
-import type { AgentActivity, AgentConfig, LoopConfig, Task, TaskOutcome, TaskResult } from "../core/types.js";
+import type { AgentActivity, AgentConfig, LoopConfig, PipelineRunState, Task, TaskOutcome, TaskResult } from "../core/types.js";
 import type { AgentHandle, SpawnContext } from "../core/adapter.js";
 import { spawnEngine, createActivity } from "./engine.js";
 import {
@@ -22,11 +22,40 @@ import {
   type HumanRequest,
   type LoopRunRequest,
   type LoopRunResult,
+  type PipelineContext,
   type PipelineEvent,
 } from "../core/pipeline/executor.js";
 
 export const CONTEXT_OUTCOME_LABEL = "context";
 export const OUTPUT_OUTCOME_LABEL = "output";
+
+/** Above this size the live context is left out of the activity snapshots (it is still in the final outcome). */
+const MAX_LIVE_CONTEXT_CHARS = 16_000;
+
+/** Apply one executor event to the run state shown in the UI. */
+export function applyPipelineEvent(state: PipelineRunState, e: PipelineEvent, now = new Date().toISOString()): void {
+  const prev = state.steps[e.path];
+  switch (e.type) {
+    case "step:start":
+      state.steps[e.path] = { kind: e.kind, name: e.name, status: e.kind === "human" ? "waiting" : "running", startedAt: now };
+      break;
+    case "step:skip":
+      state.steps[e.path] = { kind: e.kind, name: e.name, status: "skipped", endedAt: now };
+      break;
+    case "step:end":
+      state.steps[e.path] = { ...prev, kind: e.kind, name: e.name, status: e.ok ? "done" : "failed", error: e.error, endedAt: now };
+      break;
+    case "step:cancel":
+      state.steps[e.path] = { ...prev, kind: e.kind, name: e.name, status: "cancelled", endedAt: now };
+      break;
+    case "loop:attempt":
+      if (prev) state.steps[e.path] = { ...prev, attempt: e.attempt, feedback: e.feedback };
+      break;
+    case "human:requested":
+      if (prev) state.steps[e.path] = { ...prev, approvalId: e.approvalId };
+      break;
+  }
+}
 
 export interface PipelineSpawnOptions {
   /** Asks a human to approve a `human` step; resolves with the decision. */
@@ -140,6 +169,8 @@ function describeEvent(e: PipelineEvent): string {
     case "step:skip": return `⏭ ${e.kind}${e.name ? ` "${e.name}"` : ""} skipped — guard is false (${e.path})`;
     case "step:end": return `${e.ok ? "✔" : "✖"} ${e.kind}${e.name ? ` "${e.name}"` : ""}${e.error ? `: ${e.error}` : ""}`;
     case "loop:attempt": return `↻ loop "${e.loop}" attempt ${e.attempt}${e.feedback ? ` — ${e.feedback}` : ""}`;
+    case "step:cancel": return `■ ${e.kind}${e.name ? ` "${e.name}"` : ""} stopped (${e.path})`;
+    case "human:requested": return `⏸ waiting for approval "${e.name}" (${e.approvalId})`;
   }
 }
 
@@ -162,6 +193,21 @@ export function spawnPipeline(
   const outcomes: TaskOutcome[] = [];
   const log: string[] = [];
   let alive = true;
+  // Shared with the executor, which mutates it in place: read live for the UI.
+  const context: PipelineContext = {};
+  const runState: PipelineRunState = {
+    status: "running",
+    pipeline: structuredClone(agent.pipeline!),
+    steps: {},
+    startedAt: new Date(start).toISOString(),
+  };
+  const snapshotState = (): PipelineRunState => {
+    const json = JSON.stringify(context);
+    const snapshot: PipelineRunState = { ...runState, steps: structuredClone(runState.steps) };
+    if (json.length <= MAX_LIVE_CONTEXT_CHARS) snapshot.context = JSON.parse(json);
+    else snapshot.contextTruncated = true;
+    return snapshot;
+  };
 
   // Loop sessions start fresh: a saved conversation belongs to a single session.
   const loopCtx: SpawnContext | undefined = ctx ? { ...ctx, resumeMessages: undefined, continuation: undefined } : undefined;
@@ -176,6 +222,7 @@ export function spawnPipeline(
       const total: AgentActivity = { ...finished, filesCreated: [...finished.filesCreated], filesEdited: [...finished.filesEdited] };
       for (const h of running) addActivity(total, h.activity);
       total.lastUpdate = new Date().toISOString();
+      total.pipeline = snapshotState();
       return total;
     },
     done: Promise.resolve() as unknown as Promise<TaskResult>,
@@ -234,9 +281,12 @@ export function spawnPipeline(
     const result = await executePipeline(agent.pipeline!, agent.loops ?? {}, {
       runLoop,
       requestHuman: options.requestHuman,
-      onEvent: (e) => note(describeEvent(e)),
+      onEvent: (e) => { applyPipelineEvent(runState, e); note(describeEvent(e)); },
       maxLoopAttempts: options.maxLoopAttempts,
-    }, { signal: abort.signal });
+    }, { signal: abort.signal, context });
+    runState.status = result.ok ? "completed" : "failed";
+    runState.error = result.error;
+    runState.endedAt = new Date().toISOString();
     alive = false;
     note(result.ok ? "Pipeline completed" : `Pipeline failed: ${result.error}`);
     outcomes.push({
