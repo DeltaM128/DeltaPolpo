@@ -42,6 +42,7 @@ The installer bundles the server (`polpo-server.exe`): Node.js is not required.
 - Click a node to edit it in the side panel (title, agent, description with `{{parameters}}`, retries, expectations as JSON). Select and press Delete to remove.
 - Cycles are refused. Renaming or deleting a task updates every reference. Saving adds the `dependsOn` that checkpoints and delays require.
 - **Run** (on the playbook page or its card) asks for the parameters and starts a mission.
+- When the mission reaches a checkpoint it pauses. Approve it from **Approvals** (or the mission page): **Approve and continue** lets the blocked tasks start. The pause survives closing the app.
 
 ### Agent pipelines
 **Agents → an agent → Pipeline** tab.

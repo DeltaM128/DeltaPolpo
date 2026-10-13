@@ -42,6 +42,7 @@ import { useAsyncAction } from "@/hooks/use-polpo";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { PausedCheckpoints } from "@/components/paused-checkpoints";
 import { JsonBlock } from "@/components/json-block";
 
 // ── Status styling ──
@@ -428,6 +429,9 @@ export function ApprovalsPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-4">
+      {/* Missions paused at a playbook checkpoint (not approval requests, resumed here too) */}
+      <PausedCheckpoints />
+
       {/* ── Stats row ── */}
       <div className="grid grid-cols-2 gap-2 shrink-0 sm:grid-cols-4 sm:gap-3">
         <StatCard

@@ -144,6 +144,24 @@ export class MissionExecutor {
   }
 
   /**
+   * Re-register a mission's checkpoint definitions from its document when the persisted
+   * state lost them (state kept in memory before a restart). Without them a mission paused
+   * at a checkpoint can never be resumed. Returns the definitions now known for the group.
+   */
+  async restoreCheckpointDefinitions(group: string, missionData: string | undefined): Promise<MissionCheckpoint[]> {
+    const known = this.getCheckpoints(group);
+    if (known.length > 0 || !missionData) return known;
+    try {
+      const doc = JSON.parse(missionData) as { checkpoints?: MissionCheckpoint[] };
+      if (Array.isArray(doc.checkpoints) && doc.checkpoints.length > 0) {
+        this.cpState.definitions[group] = doc.checkpoints;
+        await this.cpStore.save(this.cpState);
+      }
+    } catch { /* malformed mission data: nothing to restore */ }
+    return this.getCheckpoints(group);
+  }
+
+  /**
    * Check if a task is blocked by an active (unresumed) checkpoint.
    * Returns the blocking checkpoint if found, undefined if the task can proceed.
    */

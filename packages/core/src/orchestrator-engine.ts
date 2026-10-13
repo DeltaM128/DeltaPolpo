@@ -91,6 +91,7 @@ export interface MissionExecutorPort {
   cleanupCompletedGroups(tasks: Task[]): Promise<void>;
   getQualityGates(group: string): MissionQualityGate[];
   getCheckpoints(group: string): MissionCheckpoint[];
+  restoreCheckpointDefinitions(group: string, missionData: string | undefined): Promise<MissionCheckpoint[]>;
   getBlockingCheckpoint(group: string, taskTitle: string, taskId: string, allTasks: Task[]): Promise<{ checkpoint: MissionCheckpoint; reachedAt: string } | undefined>;
   getDelays(group: string): MissionDelay[];
   getBlockingDelay(group: string, taskTitle: string, taskId: string, allTasks: Task[]): Promise<{ delay: MissionDelay; startedAt: string; expiresAt: string } | undefined>;
@@ -339,11 +340,15 @@ export class OrchestratorEngine {
       return lookup;
     };
     const readyList: Task[] = [];
+    // A paused mission waits for a person (checkpoint), it is not a deadlock.
+    let waitingOnPausedMission = false;
     for (const task of pending) {
       let isReady = true;
       if (task.group) {
         const mission = await lookupMission(task as Task & { group: string });
         if (mission && (mission.status === "cancelled" || mission.status === "completed" || mission.status === "paused")) { isReady = false; }
+        const missionPaused = mission?.status === "paused";
+        if (missionPaused) waitingOnPausedMission = true;
 
         // Check quality gates — task may be blocked by a gate even if deps are done
         if (isReady && this.qualityController) {
@@ -360,9 +365,13 @@ export class OrchestratorEngine {
           }
         }
 
-        // Check checkpoints — task may be blocked by a checkpoint awaiting human resume
-        if (isReady) {
-          const checkpoints = this.missionExec.getCheckpoints(task.group);
+        // Check checkpoints — task may be blocked by a checkpoint awaiting human resume.
+        // Also for paused missions: after a restart this re-activates the checkpoint that
+        // paused them, so it can be seen and resumed again.
+        if (isReady || missionPaused) {
+          const checkpoints = missionPaused
+            ? await this.missionExec.restoreCheckpointDefinitions(task.group, mission?.data)
+            : this.missionExec.getCheckpoints(task.group);
           if (checkpoints.length > 0) {
             const blockingCp = await this.missionExec.getBlockingCheckpoint(
               task.group,
@@ -402,7 +411,7 @@ export class OrchestratorEngine {
     // Don't consider it a deadlock if tasks are awaiting approval, blocked by checkpoints, or waiting on delays
     const hasActiveCheckpoints = this.missionExec.getActiveCheckpoints().length > 0;
     const hasActiveDelays = this.missionExec.getActiveDelays().length > 0;
-    if (ready.length === 0 && inProgress.length === 0 && pending.length > 0 && awaitingApproval.length === 0 && !hasActiveCheckpoints && !hasActiveDelays) {
+    if (ready.length === 0 && inProgress.length === 0 && pending.length > 0 && awaitingApproval.length === 0 && !hasActiveCheckpoints && !hasActiveDelays && !waitingOnPausedMission) {
       if (this.deadlockResolver) {
         // Async resolution already in progress — wait for next tick
         if (this.deadlockResolver.isResolving()) return false;

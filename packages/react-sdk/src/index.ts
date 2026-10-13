@@ -115,6 +115,7 @@ export type {
   CustomProviderInfo,
   SSEEvent,
   ActiveDelay,
+  ActiveCheckpoint,
   CreateTaskRequest,
   UpdateTaskRequest,
   TaskDirection,

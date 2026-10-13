@@ -13,6 +13,7 @@ First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflo
 
 ### Added
 - **Playbook graph editor** (Playbooks → a playbook → Editor): add tasks, checkpoints and delays, connect them by dragging, edit them in a side panel, save. Cycles are refused; renames and deletions update every reference.
+- **Approve checkpoints from the dashboard**: missions paused at a playbook checkpoint are listed on the Approvals page and on the mission page with an "Approve and continue" button (the resume API existed but nothing in the dashboard called it).
 - **New playbook** button: creates an empty playbook and opens it in the editor. **Run** button on playbook cards and on the playbook page (the run dialog existed but nothing opened it).
 - **Agent pipelines are executed**: agents with `loops` and a `pipeline` run it for their tasks (loops, `parallel` with join all/any/n, `switch`, `human` approvals, `when` guards, `stopWhen`, `output.schema`). Previously the pipeline contract was only validated and stored. See [docs/loops.md](docs/loops.md).
 - **Pipeline editor** (Agents → an agent → Pipeline): a top-down flow with "+" insertion points, loop definitions, validation that blocks saving.
@@ -28,6 +29,8 @@ First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflo
 - After a setup completed from the dashboard, tasks stayed pending until the server restarted.
 - Playbooks with checkpoints or delays could be saved but not run (missing `dependsOn`), and the run answered a plain-text 500; the required dependencies are now added, and run errors are readable.
 - Approval requests of pipeline steps that stopped waiting (task killed, parallel join decided) no longer stay pending.
+- A mission paused at a checkpoint lost its pause on restart (closing the desktop app): with file storage, checkpoint and delay state was kept in memory only; the blocked task was then force-failed as a "deadlock". The state is now saved to `.polpo/checkpoints.json` / delays file, a paused mission is never treated as a deadlock, and missions paused before the fix get their checkpoint back.
+- `GET /missions/checkpoints` and `GET /missions/delays` answered "Mission not found" (shadowed by `GET /missions/:id`).
 - The agents list kept a stale ETag after an agent's configuration changed, so browsers showed outdated agents.
 - Windows build of the installer: Git Bash instead of the WSL launcher, and electron-builder's winCodeSign tools extracted without the macOS symlinks that need Developer Mode.
 

@@ -531,6 +531,15 @@ export interface MissionDelay {
 }
 
 /** Runtime state of an active delay (timer started, waiting to expire). */
+/** A checkpoint currently pausing a mission (GET /missions/checkpoints). */
+export interface ActiveCheckpoint {
+  /** Mission group: the mission name (repeated runs: "<name> #<n>"). */
+  group: string;
+  checkpointName: string;
+  checkpoint: { name: string; afterTasks: string[]; blocksTasks: string[]; message?: string };
+  reachedAt: string;
+}
+
 export interface ActiveDelay {
   /** Mission group name. */
   group: string;

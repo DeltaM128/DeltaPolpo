@@ -67,6 +67,8 @@ import { HookRegistry } from "./hooks.js";
 import { ApprovalManager } from "./approval-manager.js";
 import { PIPELINE_GATE_PREFIX } from "@polpo-ai/core/approval-manager";
 import { FileApprovalStore } from "../stores/file-approval-store.js";
+import { FileCheckpointStore } from "../stores/file-checkpoint-store.js";
+import { FileDelayStore } from "../stores/file-delay-store.js";
 import { NotificationRouter } from "../notifications/index.js";
 import { FileNotificationStore } from "../stores/file-notification-store.js";
 import { TelegramCallbackPoller } from "../notifications/channels/telegram.js";
@@ -1024,7 +1026,13 @@ export class Orchestrator extends TypedEmitter {
         delayStore: this.drizzleStores.delayStore,
         peerStore: this.drizzleStores.peerStore,
         configStore: this.drizzleStores.configStore,
-      } : {}),
+      } : {
+        // File storage: checkpoint and delay state on disk too. Without them the mission
+        // executor kept it in memory, so a mission paused at a checkpoint lost its pause on
+        // restart (closing the desktop app) and could never be resumed.
+        checkpointStore: new FileCheckpointStore(this.polpoDir),
+        delayStore: new FileDelayStore(this.polpoDir),
+      }),
     };
   }
 
