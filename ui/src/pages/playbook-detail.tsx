@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -70,6 +70,9 @@ export function PlaybookDetailPage() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const { getPlaybook } = usePlaybooks();
+  // ?tab=editor opens the graph editor directly (e.g. right after "New playbook").
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") ?? "graph";
 
   // The fetched playbook is tagged with the name it was loaded for, so a
   // route change shows the loader without resetting state in the effect.
@@ -162,7 +165,7 @@ export function PlaybookDetailPage() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="graph" className="flex flex-col flex-1 min-h-0">
+      <Tabs defaultValue={initialTab} className="flex flex-col flex-1 min-h-0">
         <TabsList className="shrink-0">
           <TabsTrigger value="graph" className="gap-1.5 text-xs">
             <Workflow className="h-3.5 w-3.5" />
