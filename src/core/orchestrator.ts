@@ -100,6 +100,7 @@ import { TaskWatcherManager } from "./task-watcher.js";
 import { BackgroundWaitManager, type BackgroundWaitContinuation } from "./background-wait-manager.js";
 import { ConversationCheckManager, type ConversationCheckRunner } from "./conversation-check-manager.js";
 import { FileLearningStore, LearningManager, type LearningRunner, type LearningSkillPort } from "./learning.js";
+import { DriveManager, FileDriveStore, type ReflectionRunner } from "./drive.js";
 import {
   assignSkillToAgent, createAgentSkill, loadSkillIndex, removeSkill, removeSkillFromIndex, unassignSkillFromAgent, updateSkillIndex,
 } from "../llm/skills.js";
@@ -193,6 +194,8 @@ export class Orchestrator extends TypedEmitter {
   private backgroundWaitMgr?: BackgroundWaitManager;
   private conversationCheckMgr?: ConversationCheckManager;
   private learningMgr?: LearningManager;
+  private driveMgr?: DriveManager;
+  private reflectionRunner?: ReflectionRunner;
   private learningRunner?: LearningRunner;
   private conversationCheckRunner?: ConversationCheckRunner;
   private backgroundWaitContinuation?: BackgroundWaitContinuation;
@@ -497,6 +500,13 @@ export class Orchestrator extends TypedEmitter {
   getConversationCheckManager(): ConversationCheckManager | undefined { return this.conversationCheckMgr; }
   /** Agents learning from their conversations (learning in the agent config). */
   getLearningManager(): LearningManager | undefined { return this.learningMgr; }
+  /** Agents pursuing a purpose on their own initiative (drive in the agent config). */
+  getDriveManager(): DriveManager | undefined { return this.driveMgr; }
+  /** How a reflection runs: a turn of the agent's reflection session (set by the server). */
+  setReflectionRunner(runner: ReflectionRunner): void {
+    this.reflectionRunner = runner;
+    this.driveMgr?.setRunner(runner);
+  }
   /** How a learning review runs: a turn of the agent's review session (set by the server). */
   setLearningRunner(runner: LearningRunner): void {
     this.learningRunner = runner;
@@ -1202,6 +1212,24 @@ export class Orchestrator extends TypedEmitter {
     });
     if (this.learningRunner) this.learningMgr.setRunner(this.learningRunner);
     this.on("message:added", ({ sessionId }) => { void this.learningMgr?.onMessageAdded(sessionId); });
+
+    this.driveMgr = new DriveManager({
+      getAgents: () => this.getAgents(),
+      sessions: this.sessionStore,
+      rooms: this.getRoomStore(),
+      inRoom: (agent, room) => room.agents?.includes(agent) || [...this.channelGateways.entries()].some(([key, gateway]) =>
+        this.config?.settings.notifications?.channels?.[key]?.gateway?.agent === agent && gateway.isIn(room.id)),
+      checks: this.conversationCheckMgr,
+      tasks: async (agent) => (await this.registry.getAllTasks())
+        .filter((t) => t.assignTo === agent && t.status !== "done" && t.status !== "failed")
+        .map((t) => ({ id: t.id, title: t.title, status: t.status, ...(t.group ? { group: t.group } : {}) })),
+      store: new FileDriveStore(this.polpoDir),
+      createReflectionSession: (agent) => this.sessionStore.create(`Reflection: ${agent}`, agent, { scope: `reflection:${agent}` }),
+      emit: (event, payload) => this.emit(event, payload),
+      log: (level, message) => this.emit("log", { level, message }),
+    });
+    if (this.reflectionRunner) this.driveMgr.setRunner(this.reflectionRunner);
+    this.driveMgr.start();
 
     // A pipeline waiting on a person stops with its task (kill, crash, timeout). The runner
     // cannot always say so (on Windows a kill ends it at once): close its open requests here.
@@ -1915,6 +1943,7 @@ export class Orchestrator extends TypedEmitter {
     this.stopped = true;
     this.backgroundWaitMgr?.dispose();
     this.conversationCheckMgr?.dispose();
+    this.driveMgr?.dispose();
     this.learningMgr?.dispose();
     this.engine?.stop();
   }
@@ -1928,6 +1957,7 @@ export class Orchestrator extends TypedEmitter {
     this.stopped = true;
     this.backgroundWaitMgr?.dispose();
     this.conversationCheckMgr?.dispose();
+    this.driveMgr?.dispose();
     this.learningMgr?.dispose();
     for (const key of [...this.chatWorkspaces.keys()]) await this.closeChatWorkspace(key, "shutdown");
     for (const { guard } of this.chatBrowserGuards.values()) await guard.close().catch(() => undefined);
@@ -1998,6 +2028,7 @@ export class Orchestrator extends TypedEmitter {
     this.scheduler?.dispose();
     this.backgroundWaitMgr?.dispose();
     this.conversationCheckMgr?.dispose();
+    this.driveMgr?.dispose();
     this.learningMgr?.dispose();
     await this.registry.close?.();
     await this.runStore.close();
