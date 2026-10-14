@@ -29,7 +29,8 @@ export interface ConversationCheckTarget {
   name?: string;
 }
 
-export type ConversationCheckState = "active" | "ended" | "cancelled";
+/** "proposed": planned by an agent on its own initiative, waiting for a yes before it runs. */
+export type ConversationCheckState = "active" | "proposed" | "ended" | "cancelled";
 
 export interface ConversationCheck {
   id: string;
@@ -54,6 +55,8 @@ export interface ConversationCheck {
   state: ConversationCheckState;
   /** Who asked for it (person or peer id), for listing. */
   createdBy?: string;
+  /** An agent's own intention (nobody asked): why it plans it, in its words. */
+  why?: string;
   createdAt: string;
   updatedAt: string;
   nextRunAt: string;
@@ -79,6 +82,9 @@ export interface NewConversationCheck {
   timezone?: string;
   target?: ConversationCheckTarget;
   createdBy?: string;
+  why?: string;
+  /** Start as "proposed" (waits for a yes). */
+  proposed?: boolean;
   maxRuns?: number;
   endsAt?: string;
   /** First run; default: one interval from now. */
