@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
+
 ### Fixed
 - **Desktop app:** no task ever ran. The compiled server started task runners with a script path that does not exist inside the binary ("too many arguments. Expected 0 arguments but got 3"); it now starts them with a hidden `__runner` command.
 - **Desktop app:** "Login with subscription" failed for every provider ("Cannot find module './anthropic.js'"). The OAuth flows are now registered statically, and provider login pages open in the default browser instead of a bare Electron window.
