@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Edit an agent from its page:** an Edit button opens a panel with the agent's role, team, manager, model (with "Use project default"), reasoning, turn and parallel-task limits, additional instructions, built-in tools and tool categories, skills, identity (display name, title, company, email, timezone, tone, personality, bio, responsibilities) and advanced settings (allowed folders, email domains, browser profile, Telegram voice replies). Before, the agent page only showed the configuration; it could be changed only in the chat with Polpo, in `agents.json` or through the API.
+- `PATCH /agents/:name`: an empty value removes an optional text field (`model`, `role`, `systemPrompt`, `reasoning`, `browserProfile`, identity fields), e.g. `model: ""` makes the agent use the project default again.
+
+### Fixed
+- The model list of the Add agent dialog was empty in the desktop app: the model picker called the API with a relative path, which does not reach the server from a page loaded from `file://`.
+
 ## [0.4.6-delta.1] — 2026-10-13 — DeltaPolpo
 
 First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflows, local models and a Windows desktop installer. See [DELTAPOLPO.md](DELTAPOLPO.md).
