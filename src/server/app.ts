@@ -830,7 +830,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     deleteMission: (id: string) => o.deleteMission(id),
     executeMission: (id: string) => o.executeMission(id),
     resumeMission: (id: string, opts?: any) => o.resumeMission(id, opts),
-    abortGroup: (group: string) => o.abortGroup(group),
+    abortGroup: (group: string, missionId?: string) => o.abortGroup(group, missionId),
     getActiveCheckpoints: () => o.getActiveCheckpoints(),
     resumeCheckpointByMissionId: (mid: string, cp: string) => o.resumeCheckpointByMissionId(mid, cp),
     getActiveDelays: () => o.getActiveDelays(),

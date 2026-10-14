@@ -71,7 +71,7 @@ export interface MissionRouteDeps {
   deleteMission: (missionId: string) => Promise<any>;
   executeMission: (missionId: string) => Promise<any>;
   resumeMission: (missionId: string, opts?: any) => Promise<any>;
-  abortGroup: (groupName: string) => Promise<any>;
+  abortGroup: (groupName: string, missionId?: string) => Promise<any>;
   getActiveCheckpoints: () => any[];
   resumeCheckpointByMissionId: (missionId: string, checkpointName: string) => Promise<any>;
   getActiveDelays: () => any[];
