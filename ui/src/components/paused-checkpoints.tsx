@@ -22,26 +22,28 @@ function missionNameOf(group: string): string {
 const CHECKPOINT_EVENTS = ["checkpoint:reached", "checkpoint:resumed", "mission:completed", "mission:resumed", "mission:aborted", "mission:deleted"];
 
 /** Checkpoints where a mission is paused, kept current by events (with a slow poll as fallback). */
-export function useActiveCheckpoints(pollMs = 5000) {
+function useActiveCheckpoints(pollMs = 5000) {
   const { client } = usePolpo();
   const { events } = useEvents(CHECKPOINT_EVENTS, 1);
   const [active, setActive] = useState<ActiveCheckpoint[]>([]);
-
-  const refresh = useCallback(async () => {
-    if (!client) return;
-    try {
-      setActive(await client.getActiveCheckpoints());
-    } catch { /* server unreachable: keep the last list */ }
-  }, [client]);
+  const [tick, setTick] = useState(0);
 
   // The event buffer is capped, so react to the latest event id, not to its length.
   const latestEventId = events.at(-1)?.id;
-  useEffect(() => { void refresh(); }, [refresh, latestEventId]);
   useEffect(() => {
-    const t = setInterval(() => void refresh(), pollMs);
+    if (!client) return;
+    let cancelled = false;
+    client.getActiveCheckpoints()
+      .then((list) => { if (!cancelled) setActive(list); })
+      .catch(() => { /* server unreachable: keep the last list */ });
+    return () => { cancelled = true; };
+  }, [client, latestEventId, tick]);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), pollMs);
     return () => clearInterval(t);
-  }, [refresh, pollMs]);
+  }, [pollMs]);
 
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
   return { active, refresh };
 }
 
@@ -70,7 +72,7 @@ export function PausedCheckpoints({ missionId, missionName }: { missionId?: stri
     try {
       await client.resumeCheckpoint(id, cp.checkpointName);
       toast.success(`Checkpoint "${cp.checkpointName}" approved — the mission continues`);
-      await refresh();
+      refresh();
     } catch (e) {
       toast.error(`Could not resume: ${(e as Error).message}`);
     } finally {
