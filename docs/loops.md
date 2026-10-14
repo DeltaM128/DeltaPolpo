@@ -111,7 +111,7 @@ The task's runner process executes the pipeline (`src/adapters/pipeline.ts`, `sr
 - `human`: creates an approval request (Approvals page, `/approve` in channels, `POST /api/v1/approvals/{id}/approve|reject`) and waits. Approving continues; rejecting fails the pipeline with the rejection note. Each channel in `notify` gets a direct notification. Resolving these requests does not change the task's status — the pipeline does. Human steps need the local server (the runner reaches it over the notification socket). A request nobody waits for anymore — the run was cancelled, a `parallel` join was already decided, or the task stopped — is rejected automatically by `system`.
 - `pipeline.mode: "parallel"` runs the top-level steps as one `parallel` step with `join: "all"`.
 
-**Live state.** The run exposes its state in the run activity (`activity.pipeline`): each step by path (`steps.1.switch.cases.0.steps.0`) with its status (running, waiting, done, failed, skipped, cancelled), attempt, retry feedback and error, plus the shared context. It travels with `agent:activity` events, so clients can follow a run live.
+**Live state.** The run exposes its state in the run activity (`activity.pipeline`): each step by path (`steps.1.switch.cases.0.steps.0`) with its status (running, waiting, done, failed, skipped, cancelled), attempt, retry feedback and error, plus the shared context. It travels with `agent:activity` events. The task page shows it in the Pipeline tab, live while running and from the run log afterwards.
 
 **Result.** The task succeeds when the pipeline completes; its usual assessment (expectations, reviews, retries) then applies. A failed pipeline fails the run with the failing step's reason, and Polpo's normal retry policy takes over.
 
