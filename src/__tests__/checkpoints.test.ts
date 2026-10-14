@@ -655,3 +655,48 @@ describe("Checkpoints", () => {
     });
   });
 });
+
+describe("Delay durations", () => {
+  it("reads ISO 8601 durations case-insensitively and refuses empty or malformed ones", async () => {
+    const { parseISO8601Duration, isValidISO8601Duration } = await import("@polpo-ai/core/iso-duration");
+    expect(parseISO8601Duration("PT1S")).toBe(1000);
+    expect(parseISO8601Duration("PT1s")).toBe(1000);
+    expect(parseISO8601Duration(" pt30m ")).toBe(30 * 60_000);
+    expect(parseISO8601Duration("P1DT2H")).toBe(26 * 3_600_000);
+    for (const bad of ["P", "PT", "1h", "PT1X", "", "soon"]) expect(isValidISO8601Duration(bad)).toBe(false);
+  });
+
+  it("refuses a mission whose delay has a malformed duration", async () => {
+    const { parseMissionDocument } = await import("../core/schemas.js");
+    const doc = {
+      tasks: [{ title: "A", description: "a" }, { title: "B", description: "b", dependsOn: ["A"] }],
+      delays: [{ name: "wait", afterTasks: ["A"], blocksTasks: ["B"], duration: "soon" }],
+    };
+    expect(() => parseMissionDocument(doc)).toThrow(/duration/);
+    expect(() => parseMissionDocument({ ...doc, delays: [{ ...doc.delays[0], duration: "PT1s" }] })).not.toThrow();
+  });
+
+  it("ignores a stored delay it cannot read instead of failing every supervisor tick", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "polpo-test-delay-"));
+    try {
+      await new FileDelayStore(tmpDir).save({
+        definitions: { "report": [{ name: "wait", afterTasks: ["A"], blocksTasks: ["B"], duration: "soon" }] },
+        active: {},
+        expired: [],
+      });
+      const ctx = createMockCtx({ polpoDir: tmpDir, checkpointStore: new FileCheckpointStore(tmpDir), delayStore: new FileDelayStore(tmpDir) });
+      const logs: string[] = [];
+      ctx.emitter.on("log", (e) => logs.push(e.message));
+      const taskMgr = new TaskManager(ctx);
+      const missionExec = new MissionExecutor(ctx, taskMgr, new AgentManager(ctx));
+      await missionExec.ready;
+      const tasks = [createDoneTask("A", { group: "report" }), createPendingTask("B", { group: "report" })];
+
+      await expect(missionExec.getBlockingDelay("report", "B", tasks[1].id, tasks)).resolves.toBeUndefined();
+      await expect(missionExec.getBlockingDelay("report", "B", tasks[1].id, tasks)).resolves.toBeUndefined();
+      expect(logs.filter((m) => m.includes('"wait"'))).toHaveLength(1);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

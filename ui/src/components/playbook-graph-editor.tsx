@@ -44,6 +44,7 @@ import {
   disconnect,
   draftFromMission,
   draftWarnings,
+  isValidDuration,
   missionFromDraft,
   nodeKey,
   parseNodeId,
@@ -451,8 +452,11 @@ function Inspector({
                 <CommitInput
                   className="h-8 text-xs font-mono"
                   value={delay.duration}
-                  onCommit={(v) => onGateChange({ duration: v.trim() })}
+                  onCommit={(v) => onGateChange({ duration: v.trim().toUpperCase() })}
                 />
+                {!isValidDuration(delay.duration) && (
+                  <span className="text-[11px] text-red-400">Not a valid duration: the playbook will not run. Examples: PT30S, PT30M, PT2H, P1D.</span>
+                )}
               </Field>
             )}
             <Field label="Message">

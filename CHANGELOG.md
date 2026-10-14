@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PATCH /agents/:name`: an empty value removes an optional text field (`model`, `role`, `systemPrompt`, `reasoning`, `browserProfile`, identity fields), e.g. `model: ""` makes the agent use the project default again.
 
 ### Fixed
+- A delay with a duration the parser could not read (e.g. `PT1s`, lowercase) made every supervisor tick fail, so no task of any mission started anymore. Durations are now read case-insensitively, a mission or playbook with an invalid duration is refused with a clear message, the playbook editor flags it, and a stored delay that still cannot be read is reported once and ignored instead of stopping the supervisor.
 - The model list of the Add agent dialog was empty in the desktop app: the model picker called the API with a relative path, which does not reach the server from a page loaded from `file://`.
 
 ## [0.4.6-delta.1] — 2026-10-13 — DeltaPolpo

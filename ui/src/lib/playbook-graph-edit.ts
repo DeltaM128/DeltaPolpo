@@ -304,6 +304,13 @@ function cleanTask(task: MissionTaskDef): MissionTaskDef {
   return out;
 }
 
+/** ISO 8601 duration as the server reads it (case-insensitive), e.g. PT30S, PT30M, PT2H, P1D. */
+export function isValidDuration(duration: string): boolean {
+  const d = duration.trim().toUpperCase();
+  return /^P(?:\d+Y)?(?:\d+M)?(?:\d+W)?(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$/.test(d)
+    && d !== "P" && !d.endsWith("T");
+}
+
 /** Problems that do not block saving but will matter when the playbook runs. */
 export function draftWarnings(draft: GraphDraft): string[] {
   const warnings: string[] = [];
@@ -317,6 +324,9 @@ export function draftWarnings(draft: GraphDraft): string[] {
         warnings.push(`${kind} "${g.name}" needs at least one incoming and one outgoing task.`);
       }
     }
+  }
+  for (const d of draft.delays) {
+    if (!isValidDuration(d.duration)) warnings.push(`Delay "${d.name}" has an invalid duration "${d.duration}": use PT30S, PT30M, PT2H or P1D.`);
   }
   return warnings;
 }
