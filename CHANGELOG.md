@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
 
+### Changed
+- A new mission whose name is taken is named `name (2)`, `name (3)`…, so every run of a playbook is its own mission.
+- Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
+- Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
+
 ### Fixed
 - Task runs ignored the custom providers of `polpo.json` (local model servers such as Ollama or LM Studio, gateways): their models worked in chat, but tasks failed with "Model not found". The task runner now registers them, with their secrets from the vault.
 - Playbooks could not be run from the dashboard: the run dialog existed but no button opened it. Playbook cards and the playbook page now have a Run button.
@@ -19,11 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Running a playbook a second time created a mission with the same name, which is its task group: the new run saw the first run's finished tasks (its checkpoint was reached at once) and was never marked completed. With SQLite storage the second run failed instead.
 - With two missions that have tasks with the same titles in progress (e.g. two runs of one playbook), a checkpoint, delay or quality gate could be skipped: they looked for their tasks by title across all missions. They now look only at their own mission's tasks.
 - Missions that share a name never completed, and Abort and Resume had no effect on them: completion, abort and the mission page went by the shared group and always found the first mission. They now work per mission, and missions left active with all their tasks finished are completed on the next start. Deleting one of them no longer deletes the other missions' tasks.
-
-### Changed
-- A new mission whose name is taken is named `name (2)`, `name (3)`…, so every run of a playbook is its own mission.
-- Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
-- Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
 
 ## [0.4.9] — 2026-10-14 — Routine
 
