@@ -26,12 +26,17 @@ export const ScheduleCheckSchema = Type.Object({
   max_runs: Type.Optional(Type.Number({ minimum: 1, description: "Stop after this many runs" })),
   until: Type.Optional(Type.String({ description: "Stop after this time" })),
   run_now: Type.Optional(Type.Boolean({ description: "Run the first time now (default: after one interval, or at the first cron time)" })),
+  why: Type.Optional(Type.String({ description: "When you plan it on your own initiative (nobody asked): why, in your words. It becomes one of your intentions" })),
+  propose: Type.Optional(Type.Boolean({ description: "Propose it instead: it waits for a yes (confirm_check) before it runs" })),
 });
 export const ListChecksSchema = Type.Object({
   all: Type.Optional(Type.Boolean({ description: "Every check you scheduled, from any chat (Polpo: every check of the instance). Default: this chat's" })),
 });
 export const CancelCheckSchema = Type.Object({
   id: Type.String({ description: "Check id (chk_…), from schedule_check or list_checks" }),
+});
+export const ConfirmCheckSchema = Type.Object({
+  id: Type.String({ description: "Id of a proposed check (chk_…)" }),
 });
 export const ListChatsSchema = Type.Object({});
 export const SendMessageSchema = Type.Object({
@@ -47,7 +52,8 @@ export const SCHEDULE_CHECK_DESCRIPTION = "Do something later, once or on a sche
   + `or exactly ${CHECK_NOTHING_TO_REPORT} when there is nothing worth telling (then nothing is posted). Reports are also added to this conversation. `
   + "Use this instead of promising to notify later: without a check nothing happens after this turn.";
 export const LIST_CHECKS_DESCRIPTION = "List scheduled checks and reminders (this chat's, or all with all=true): id, schedule, target, instructions, runs, next run, last report or error.";
-export const CANCEL_CHECK_DESCRIPTION = "Stop a scheduled check or reminder (by id).";
+export const CANCEL_CHECK_DESCRIPTION = "Stop a scheduled check or reminder, or drop a proposed one (by id).";
+export const CONFIRM_CHECK_DESCRIPTION = "Say yes to a proposed check (an agent's intention waiting for approval): it runs from then on. Use it when the person it concerns agrees.";
 export const LIST_CHATS_DESCRIPTION = "The chats you can send to: every Telegram group, topic and person the instance's bots have met, with the id to use in `to` (send_message, schedule_check). Also tells the current time.";
 export const SEND_MESSAGE_DESCRIPTION = "Send a message now to any chat: a Telegram group, topic or person (by name or id from list_chats), wherever you were asked from. "
   + "If your bot is not in that chat, another bot of the instance sends it. For later or recurring messages use schedule_check.";
@@ -72,6 +78,12 @@ export interface CheckToolContext {
   chats?: ChatAccess;
   /** Default timezone of cron and at (the agent's identity). */
   timezone?: string;
+  /** The agent's autonomy (drive): with "propose" its own intentions wait for a yes. */
+  autonomy?: "propose" | "balanced" | "act";
+  /** True while this turn is the agent's reflection (its own initiative, nobody asked). */
+  reflecting?: () => boolean;
+  /** Record what the agent did at a reflection, for its journal. */
+  noteAction?: (action: string) => void;
 }
 
 function where(target: ConversationCheckTarget | undefined, origin?: ConversationCheckTarget): string {
@@ -163,8 +175,16 @@ export async function execScheduleCheck(args: Record<string, unknown>, ctx: Chec
       ...(args.max_runs !== undefined ? { maxRuns: Number(args.max_runs) } : {}),
       ...(until ? { endsAt: until.toISOString() } : {}),
       ...(firstRunAt ? { firstRunAt } : {}),
+      ...(str(args.why) ? { why: str(args.why) } : {}),
+      ...(args.propose || (str(args.why) && ctx.autonomy === "propose") ? { proposed: true } : {}),
     });
     const silent = check.message ? "" : "; runs with nothing to report stay silent";
+    if (check.state === "proposed") {
+      ctx.noteAction?.(`proposed ${check.id} → ${check.target?.name ?? "this chat"}${check.why ? ` (${check.why.slice(0, 120)})` : ""}`);
+      return `Proposed ${check.id}: ${schedule(check)}, at ${localTime(check.nextRunAt, timezone)}, to ${where(check.target, ctx.origin)}. `
+        + "It waits for a yes: ask the person it concerns, then confirm_check; it also shows in the agent's page to approve.";
+    }
+    ctx.noteAction?.(`planned ${check.id} → ${check.target?.name ?? "this chat"}${check.why ? ` (${check.why.slice(0, 120)})` : ""}`);
     return `Check ${check.id} scheduled ${schedule(check)}, ${check.everyMinutes > 0 || check.cron ? "first run" : "runs"} at ${localTime(check.nextRunAt, timezone)}. `
       + `Reports go to ${where(check.target, ctx.origin)}${silent}. Cancel it with cancel_check.`;
   } catch (err) {
@@ -193,6 +213,16 @@ export async function execCancelCheck(args: Record<string, unknown>, ctx: CheckT
   return cancelled?.state === "cancelled" ? `Check ${id} cancelled.` : `Check ${id} is already ${cancelled?.state ?? "gone"}.`;
 }
 
+export async function execConfirmCheck(args: Record<string, unknown>, ctx: CheckToolContext): Promise<string> {
+  if (!ctx.manager) return "Error: scheduled checks are not available on this instance";
+  const id = String(args.id ?? "");
+  const [check] = (await ctx.manager.list()).filter((c) => c.id === id);
+  if (!check || (ctx.agent && check.agent !== ctx.agent && check.sessionId !== ctx.sessionId)) return `Error: no check ${id}`;
+  if (check.state !== "proposed") return `Check ${id} is ${check.state}, not waiting for a yes.`;
+  const confirmed = await ctx.manager.confirm(id);
+  return `Check ${id} confirmed: it runs ${confirmed ? `at ${localTime(confirmed.nextRunAt, ctx.timezone)}` : "as planned"}.`;
+}
+
 export async function execListChats(ctx: CheckToolContext): Promise<string> {
   if (!ctx.chats) return "Error: no Telegram bot on this instance";
   return describeChats(await ctx.chats.listChats(), ctx.chats.chatBots());
@@ -204,7 +234,17 @@ export async function execSendMessage(args: Record<string, unknown>, ctx: CheckT
   if (!text) return "Error: text is empty";
   try {
     const target = await ctx.chats.resolveChatTarget(String(args.to ?? ""), { ...(ctx.agent ? { agent: ctx.agent } : {}), ...(num(args.topic) !== undefined ? { topic: num(args.topic)! } : {}) });
+    // at a reflection, an agent that proposes does not write on its own: the message waits for a yes
+    if (ctx.autonomy === "propose" && ctx.reflecting?.() && ctx.manager && ctx.sessionId) {
+      const check = await ctx.manager.create({
+        sessionId: ctx.sessionId, ...(ctx.agent ? { agent: ctx.agent } : {}), prompt: "", message: text, everyMinutes: 0,
+        firstRunAt: new Date().toISOString(), target, proposed: true, why: str(args.why) ?? "written at a reflection",
+      });
+      ctx.noteAction?.(`proposed ${check.id}: a message to ${target.name ?? target.chatId}`);
+      return `Proposed ${check.id}: the message to ${where(target)} waits for a yes (confirm_check, or the agent's page).`;
+    }
     const bot = await ctx.chats.sendToChat(target, text, ctx.agent);
+    ctx.noteAction?.(`wrote to ${target.name ?? target.chatId}: ${text.slice(0, 120)}`);
     return `Sent to ${where(target)} (bot ${bot}).`;
   } catch (err) {
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
@@ -237,6 +277,13 @@ export function createConversationCheckTools(context: () => CheckToolContext): A
       description: CANCEL_CHECK_DESCRIPTION,
       parameters: CancelCheckSchema,
       execute: async (_id, params) => text(await execCancelCheck(params as Record<string, unknown>, context())),
+    },
+    {
+      name: "confirm_check",
+      label: "Confirm check",
+      description: CONFIRM_CHECK_DESCRIPTION,
+      parameters: ConfirmCheckSchema,
+      execute: async (_id, params) => text(await execConfirmCheck(params as Record<string, unknown>, context())),
     },
     {
       name: "list_chats",
