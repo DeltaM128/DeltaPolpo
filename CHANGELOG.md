@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The mission page refreshed the mission only on the first change of a run: nothing cleared the "missions stale" flag when the missions list was not mounted. Checkpoint events now also update the mission status (paused / active), and an abort refreshes it.
 - The Approvals page went blank (counters back to 0) at every refresh: `useApprovals` showed the loading state on every refetch. It now does so only on the first load.
 - The agents list kept a stale ETag after an agent's configuration changed, so browsers kept showing the old agents. The ETag now depends on the content.
+- A delay whose duration the parser could not read (e.g. `PT1s`, lowercase) made every supervisor tick fail, so no task of any mission started anymore. Durations are now read case-insensitively, a mission or playbook with an invalid duration is refused with a clear message, the playbook editor flags it, and a stored delay that still cannot be read is reported once and ignored instead of stopping the supervisor.
 
 ## [0.4.9] — 2026-10-14 — Routine
 
