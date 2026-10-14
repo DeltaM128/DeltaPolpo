@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Task runs ignored the custom providers of `polpo.json` (local model servers such as Ollama or LM Studio, gateways): their models worked in chat, but tasks failed with "Model not found". The task runner now registers them, with their secrets from the vault.
+
 ## [0.4.9] — 2026-10-14 — Routine
 
 ### Added
