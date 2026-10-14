@@ -1,6 +1,5 @@
 import { PolpoApiError } from "./errors.js";
 import type {
-  ActiveCheckpoint,
   AuthStatusResponse,
   VaultEntryMeta,
   Task,
@@ -26,6 +25,7 @@ import type {
   AddMissionDelayRequest,
   UpdateMissionDelayRequest,
   ActiveDelay,
+  ActiveCheckpoint,
   AddMissionQualityGateRequest,
   UpdateMissionQualityGateRequest,
   AddMissionTeamMemberRequest,
@@ -1018,6 +1018,11 @@ export class PolpoClient {
   /** Run a playbook with parameters. Returns the created mission + task count. */
   runPlaybook(name: string, params?: Record<string, string | number | boolean>): Promise<PlaybookRunResult> {
     return this.post<PlaybookRunResult>(`/playbooks/${encodeURIComponent(name)}/run`, { params });
+  }
+
+  /** Create or overwrite a playbook. The server validates the definition before writing it. */
+  savePlaybook(definition: PlaybookDefinition): Promise<{ name: string; path: string }> {
+    return this.post<{ name: string; path: string }>("/playbooks", definition);
   }
 
   // Backward-compat aliases

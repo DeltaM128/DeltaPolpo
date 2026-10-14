@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Playbook graph editor** (Playbooks → a playbook → Editor): add tasks, checkpoints and delays, connect them by dragging, edit them in a side panel, and save. Cycles are refused, renaming or deleting a task updates every reference, and saving adds the `dependsOn` that checkpoints and delays require. A **New playbook** button creates an empty playbook and opens it in the editor.
 - **Mission actions:** a Delete button, with confirmation, on the mission page, and Abort also on a mission paused at a checkpoint.
 - **Checkpoints in the dashboard:** a mission paused at a checkpoint opens an approval request (Approvals page, sidebar badge, history, `/approve`). Approving it resumes the mission; rejecting it aborts the mission. The mission page shows the pause with an "Approve and continue" button. Resuming, aborting or deleting the mission closes the request. Before, a paused mission could be resumed only through the API.
 - **Live pipeline view** (Tasks → a task → Pipeline): for tasks of an agent with a pipeline, each step is colored by its state (running, waiting for approval, done, failed, skipped or stopped), with attempts, retry feedback, errors and the shared context. It updates live while the task runs and stays available after it ends.
