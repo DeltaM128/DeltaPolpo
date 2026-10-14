@@ -487,28 +487,36 @@ export function agentRoutes(getDeps: () => {
       reportsTo = body.reportsTo.trim() || undefined;
     }
 
+    // An empty string removes an optional text field (e.g. model "" = use the project default):
+    // the stores drop undefined keys when they save.
+    const textOrUnset = (v: string) => (v.trim() === "" ? undefined : v);
+    const identity = body.identity
+      ? Object.fromEntries(Object.entries({ ...(existing.identity ?? {}), ...body.identity })
+        .map(([k, v]) => [k, typeof v === "string" && v.trim() === "" ? undefined : v]))
+      : undefined;
+
     const updates: Record<string, unknown> = {
-      ...(body.role !== undefined && { role: body.role }),
-      ...(body.model !== undefined && { model: body.model }),
-      ...(body.systemPrompt !== undefined && { systemPrompt: body.systemPrompt }),
+      ...(body.role !== undefined && { role: textOrUnset(body.role) }),
+      ...(body.model !== undefined && { model: textOrUnset(body.model) }),
+      ...(body.systemPrompt !== undefined && { systemPrompt: textOrUnset(body.systemPrompt) }),
       ...(body.skills !== undefined && { skills: body.skills }),
       ...(body.suggestions !== undefined && { suggestions: body.suggestions }),
       ...(body.allowedPaths !== undefined && { allowedPaths: body.allowedPaths }),
       ...(body.allowedTools !== undefined && { allowedTools: body.allowedTools }),
       ...(typeof body.reportsTo === "string" && { reportsTo }),
-      ...(body.reasoning !== undefined && { reasoning: body.reasoning }),
+      ...(body.reasoning !== undefined && { reasoning: textOrUnset(body.reasoning) }),
       ...(body.sandbox !== undefined && { sandbox: normalizeSandboxSettings(body.sandbox) }),
       ...(body.compaction !== undefined && { compaction: body.compaction ?? undefined }),
       ...(body.voiceReplies !== undefined && { voiceReplies: body.voiceReplies }),
       ...(body.learning !== undefined && { learning: body.learning }),
       ...(body.maxTurns !== undefined && { maxTurns: body.maxTurns }),
       ...(body.maxConcurrency !== undefined && { maxConcurrency: body.maxConcurrency }),
-      ...(body.runtime !== undefined && { runtime: body.runtime }),
+      ...(body.runtime !== undefined && { runtime: textOrUnset(body.runtime) }),
       ...(body.loops !== undefined && { loops: body.loops }),
       ...(body.pipeline !== undefined && { pipeline: body.pipeline ?? undefined }),
-      ...(body.browserProfile !== undefined && { browserProfile: body.browserProfile }),
+      ...(body.browserProfile !== undefined && { browserProfile: textOrUnset(body.browserProfile) }),
       ...(body.emailAllowedDomains !== undefined && { emailAllowedDomains: body.emailAllowedDomains }),
-      ...(body.identity && { identity: { ...(existing.identity ?? {}), ...body.identity } }),
+      ...(identity && { identity }),
       ...(body.team !== undefined && { team: body.team }),
     };
 

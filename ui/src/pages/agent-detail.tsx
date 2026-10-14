@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 
 // Sidebar cards
 import { AgentHeroCard } from "@/components/agents/agent-hero-card";
+import { EditAgentButton } from "@/components/agents/agent-edit-sheet";
 import { AgentSocialsCard } from "@/components/agents/agent-socials-card";
 import { AgentHierarchyCard } from "@/components/agents/agent-hierarchy-card";
 import { AgentPerformanceCard } from "@/components/agents/agent-performance-card";
@@ -100,12 +101,13 @@ function MobileIdentitySummary() {
           {identity?.title && <p className="text-xs text-muted-foreground">{identity.title}</p>}
           {agent.model && <p className="mt-0.5 truncate text-[10px] font-mono text-muted-foreground">{agent.model}</p>}
         </div>
+        <EditAgentButton compact className="shrink-0 ml-auto" />
         <Button
           variant="outline"
           size="sm"
           onClick={refetch}
           disabled={isRefreshing}
-          className="shrink-0 ml-auto"
+          className="shrink-0"
           aria-label={isRefreshing ? "Refreshing agent" : "Refresh agent"}
         >
           <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
