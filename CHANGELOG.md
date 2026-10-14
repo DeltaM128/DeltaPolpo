@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Agent pipelines run:** an agent with `loops` and a `pipeline` now runs it for every task assigned to it, instead of the contract being only validated and stored. Loops (own instructions, tools, model, turn limit, `stopWhen`, `output.schema`, retried with feedback up to 3 attempts), `parallel` (join all / any / n), `switch`, `when` guards and `human` approvals, with a shared context. Human steps are regular approvals (Approvals page, `/approve`, API); requests left open by a stopped pipeline are closed automatically. The run state travels with `agent:activity` events. See `docs/loops.md`.
 - **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
 
 ### Fixed
