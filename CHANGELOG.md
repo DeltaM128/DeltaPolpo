@@ -8,20 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Edit an agent from its page:** an Edit button opens a panel with the agent's role, team, manager, model (with "Use project default"), reasoning, turn and parallel-task limits, additional instructions, built-in tools and tool categories, skills, identity (display name, title, company, email, timezone, tone, personality, bio, responsibilities) and advanced settings (allowed folders, email domains, browser profile, Telegram voice replies). Before, the agent page only showed the configuration.
-- **Playbook graph editor** (Playbooks → a playbook → Editor): add tasks, checkpoints and delays, connect them by dragging, edit them in a side panel, and save. Cycles are refused, renaming or deleting a task updates every reference, and saving adds the `dependsOn` that checkpoints and delays require. A **New playbook** button creates an empty playbook and opens it in the editor.
-- **Mission actions:** a Delete button, with confirmation, on the mission page, and Abort also on a mission paused at a checkpoint.
-- **Checkpoints in the dashboard:** a mission paused at a checkpoint opens an approval request (Approvals page, sidebar badge, history, `/approve`). Approving it resumes the mission; rejecting it aborts the mission. The mission page shows the pause with an "Approve and continue" button. Resuming, aborting or deleting the mission closes the request. Before, a paused mission could be resumed only through the API.
-- **Live pipeline view** (Tasks → a task → Pipeline): for tasks of an agent with a pipeline, each step is colored by its state (running, waiting for approval, done, failed, skipped or stopped), with attempts, retry feedback, errors and the shared context. It updates live while the task runs and stays available after it ends.
-- **Pipeline editor** (Agents → an agent → Pipeline): define the agent's loops and its pipeline as a top-down flow. Insert loops, parallel branches, switches and human approvals with the "+" on the arrows, edit them in a side panel, and see problems (unknown loops, empty branches, duplicate approval names) on the nodes; they block saving. `PATCH /agents/:name` accepts `pipeline: null` to remove the pipeline and rejects pipelines that reference unknown loops.
-- **Agent pipelines run:** an agent with `loops` and a `pipeline` now runs it for every task assigned to it, instead of the contract being only validated and stored. Loops (own instructions, tools, model, turn limit, `stopWhen`, `output.schema`, retried with feedback up to 3 attempts), `parallel` (join all / any / n), `switch`, `when` guards and `human` approvals, with a shared context. Human steps are regular approvals (Approvals page, `/approve`, API); requests left open by a stopped pipeline are closed automatically. The run state travels with `agent:activity` events. See `docs/loops.md`.
 - **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
+- **Agent pipelines run:** an agent with `loops` and a `pipeline` now runs it for every task assigned to it, instead of the contract being only validated and stored. Loops (own instructions, tools, model, turn limit, `stopWhen`, `output.schema`, retried with feedback up to 3 attempts), `parallel` (join all / any / n), `switch`, `when` guards and `human` approvals, with a shared context. Human steps are regular approvals (Approvals page, `/approve`, API); requests left open by a stopped pipeline are closed automatically. The run state travels with `agent:activity` events. See `docs/loops.md`.
+- **Pipeline editor** (Agents → an agent → Pipeline): define the agent's loops and its pipeline as a top-down flow. Insert loops, parallel branches, switches and human approvals with the "+" on the arrows, edit them in a side panel, and see problems (unknown loops, empty branches, duplicate approval names) on the nodes; they block saving. `PATCH /agents/:name` accepts `pipeline: null` to remove the pipeline and rejects pipelines that reference unknown loops.
+- **Live pipeline view** (Tasks → a task → Pipeline): for tasks of an agent with a pipeline, each step is colored by its state (running, waiting for approval, done, failed, skipped or stopped), with attempts, retry feedback, errors and the shared context. It updates live while the task runs and stays available after it ends.
+- **Checkpoints in the dashboard:** a mission paused at a checkpoint opens an approval request (Approvals page, sidebar badge, history, `/approve`). Approving it resumes the mission; rejecting it aborts the mission. The mission page shows the pause with an "Approve and continue" button. Resuming, aborting or deleting the mission closes the request. Before, a paused mission could be resumed only through the API.
+- **Mission actions:** a Delete button, with confirmation, on the mission page, and Abort also on a mission paused at a checkpoint.
+- **Playbook graph editor** (Playbooks → a playbook → Editor): add tasks, checkpoints and delays, connect them by dragging, edit them in a side panel, and save. Cycles are refused, renaming or deleting a task updates every reference, and saving adds the `dependsOn` that checkpoints and delays require. A **New playbook** button creates an empty playbook and opens it in the editor.
+- **Edit an agent from its page:** an Edit button opens a panel with the agent's role, team, manager, model (with "Use project default"), reasoning, turn and parallel-task limits, additional instructions, built-in tools and tool categories, skills, identity (display name, title, company, email, timezone, tone, personality, bio, responsibilities) and advanced settings (allowed folders, email domains, browser profile, Telegram voice replies). Before, the agent page only showed the configuration.
+
+### Changed
+- A new mission whose name is taken is named `name (2)`, `name (3)`…, so every run of a playbook is its own mission.
+- Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
+- Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
+- `PATCH /agents/:name`: an empty value removes an optional text field (`model`, `role`, `systemPrompt`, `reasoning`, `browserProfile`, identity fields); e.g. `model: ""` makes the agent use the project default again.
 
 ### Fixed
-- **Desktop app:** no task ever ran. The compiled server started task runners with a script path that does not exist inside the binary ("too many arguments. Expected 0 arguments but got 3"); it now starts them with a hidden `__runner` command.
-- **Desktop app:** "Login with subscription" failed for every provider ("Cannot find module './anthropic.js'"). The OAuth flows are now registered statically, and provider login pages open in the default browser instead of a bare Electron window.
-- After a setup completed from the dashboard, tasks stayed pending until the server was restarted: the supervisor loop never started.
-- After a setup completed from the dashboard, the dashboard received no live events until the server was restarted: the `/events` route kept the event bridge that setup had replaced.
 - Task runs ignored the custom providers of `polpo.json` (local model servers such as Ollama or LM Studio, gateways): their models worked in chat, but tasks failed with "Model not found". The task runner now registers them, with their secrets from the vault.
 - Playbooks could not be run from the dashboard: the run dialog existed but no button opened it. Playbook cards and the playbook page now have a Run button.
 - Playbooks with checkpoints, delays or quality gates could be saved but not run: the blocked tasks lacked the `dependsOn` the mission schema requires, and the run answered a plain-text 500 ("Unexpected token 'I'… is not valid JSON" in the dashboard). The dependencies are now added when the playbook runs, and a run that cannot start answers a JSON 400 and leaves no mission behind.
@@ -36,11 +38,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A delay whose duration the parser could not read (e.g. `PT1s`, lowercase) made every supervisor tick fail, so no task of any mission started anymore. Durations are now read case-insensitively, a mission or playbook with an invalid duration is refused with a clear message, the playbook editor flags it, and a stored delay that still cannot be read is reported once and ignored instead of stopping the supervisor.
 - **Desktop app:** the model list of the Add agent dialog was empty: the model picker asked for the models with a relative path, which does not reach the server from a page loaded from `file://`. It now uses the configured server address and API key.
 
-### Changed
-- `PATCH /agents/:name`: an empty value removes an optional text field (`model`, `role`, `systemPrompt`, `reasoning`, `browserProfile`, identity fields); e.g. `model: ""` makes the agent use the project default again.
-- A new mission whose name is taken is named `name (2)`, `name (3)`…, so every run of a playbook is its own mission.
-- Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
-- Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
+## [0.4.9] — 2026-10-14 — Routine
+
+### Added
+- **Drive: a routine of its own.** An agent with a drive keeps a routine: the recurring moments its purpose, responsibilities, goals and tasks need (a morning check-in, an end-of-day review, a weekly plan), as recurring checks with a `why`.
+  - It sets the routine up at its first reflection, keeping the checks it already has.
+  - It reviews the routine at the weekly review and whenever its goals or tasks change.
+  - Its chats show the routine apart from what is planned once.
+- **Drive: its Polpo tasks.** Reflections now see the agent's open Polpo tasks (assigned to it), so its plan and routine follow its work.
+- **UI:** recurring intentions are marked "Routine" in the Goals tab.
+
+### Fixed
+- Replies of tool-using turns (channels, check runs, reflections) glued the text of each step together ("Now the plan.Now today's…"). Each step's text is now its own paragraph.
+
+## [0.4.8] — 2026-10-13 — Drive
+
+### Added
+- **Agent drive** (`drive` in the agent config, off by default): an agent pursues a purpose and goals on its own initiative, among people, instead of only answering when called or scheduled.
+  - **Reflection:** it reflects on its private chats and on the groups it is in, including messages it only read. It reflects after `reflectEveryMinutes` (default 120) when something new happened, and once a day in any case. It decides by itself whether to write now (`send_message`), plan something for later, or do nothing, weighing how much it serves its purpose, how serious and how urgent it is.
+  - **Intentions:** while it talks or reflects, it plans follow-ups on its own, such as wishes on someone's birthday or a check-in after an event. An intention is a scheduled check with a `why`.
+  - **Autonomy:** with `propose`, its own initiatives wait for a yes; with `balanced` (the default), it acts on low-stakes things and asks first otherwise; with `act`, it uses its own judgment. Proposed checks are approved with `confirm_check`, by Polpo, or in the UI.
+  - **Self-portrait:** it keeps a self-portrait covering its personality, the people who matter and its open threads, updated with `update_self` and part of every conversation. It starts from the identity's personality, or writes one coherent with its purpose.
+  - **Human customs:** its prompt covers birthdays and holidays, tact in groups vs private, choosing the moment, not nagging, and stopping when asked.
+  - **Goals in a cascade:** it breaks its purpose down into long-term (6–12 months), quarter, month, week and day goals, each under the one it serves, with a measure, progress, an owner (its own, or a person's or group's it supports) and the steps to do. It keeps them in its plan with `add_plan_item` / `update_plan_item`, and the plan is part of every chat.
+  - **Review rhythm:** when its day starts (`dayStartsAt`, default 07:30 in its timezone) it plans the day. On a new week, month or quarter it also does that review: score, adjust, set the next goals, and check in with the people it supports.
+  - **Method:** the guidance follows goal-setting research:
+    - specific, measurable goals, at most 3–5 per horizon;
+    - if-then plans for key actions;
+    - important before urgent, with timeboxed work sessions;
+    - progress monitoring;
+    - autonomy-supportive help for people's goals (ask, offer options, never shame);
+    - for groups, shared goals with regular check-ins.
+  - **Growing:** it asks what it could do more or better and what it lacks, studies it with its tools, and writes its own skills. With a drive it always has its own-skill tools (`list_my_skills`, `create_my_skill`, `update_my_skill`), which can be undone in the Learning tab.
+  - **Polpo:** `add_agent` / `update_agent` take `drive`; `get_agent_drive` shows the purpose, self-portrait, intentions and reflections; `reflect_agent` makes the agent reflect now.
+  - **API:** `GET /drive/:agent`, `PUT /drive/:agent/self`, `POST /drive/:agent/reflect`, `POST /drive/:agent/intentions/:id/confirm|cancel`; the event is `agent:reflected`.
+  - **UI:** a **Goals** tab in the agent page with purpose, goals, autonomy, day start, self-portrait (editable), the goals and steps tree (mark done or drop), planned and proposed intentions (approve or reject), and the reflections journal.
+  - **API:** `PATCH /drive/:agent/plan/:id`.
+- Scheduled checks gained a `proposed` state (waiting for a yes) and a `why`.
+
+### Fixed
+- **Desktop app:** no task ever ran. The compiled server started task runners with a script path that does not exist inside the binary ("too many arguments. Expected 0 arguments but got 3"); it now starts them with a hidden `__runner` command.
+- **Desktop app:** "Login with subscription" failed for every provider ("Cannot find module './anthropic.js'"). The OAuth flows are now registered statically, and provider login pages open in the default browser instead of a bare Electron window.
+- After a setup completed from the dashboard, tasks stayed pending until the server was restarted: the supervisor loop never started.
+- After a setup completed from the dashboard, the dashboard received no live events until the server was restarted: the `/events` route kept the event bridge that setup had replaced.
+- Thanks to @DeltaM128 for finding and fixing these four (#128).
 
 ## [0.4.7] — 2026-10-13 — Anywhere
 
