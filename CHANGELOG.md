@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop app:** "Login with subscription" failed for every provider ("Cannot find module './anthropic.js'"). The OAuth flows are now registered statically, and provider login pages open in the default browser instead of a bare Electron window.
 - After a setup completed from the dashboard, tasks stayed pending until the server was restarted: the supervisor loop never started.
 - After a setup completed from the dashboard, the dashboard received no live events until the server was restarted: the `/events` route kept the event bridge that setup had replaced.
+- Task runs ignored the custom providers of `polpo.json` (local model servers such as Ollama or LM Studio, gateways): their models worked in chat, but tasks failed with "Model not found". The task runner now registers them, with their secrets from the vault.
 
 ## [0.4.7] — 2026-10-13 — Anywhere
 
