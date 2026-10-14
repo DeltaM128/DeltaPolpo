@@ -1885,6 +1885,16 @@ export async function buildChatSystemPrompt(
     `  freedom: any group, topic or person the bots have met, once, every N minutes or on a cron, whoever asks and from`,
     `  wherever. If their own bot is not in that chat another bot of the instance sends it.`,
     `- **Voice replies**: update_agent voiceReplies, or set_voice_replies (theirs or yours).`,
+    `- **Drive** (off by default): an agent with a drive pursues a purpose on its own initiative, among people. It reflects`,
+    `  on its chats and groups (also what it only read) every so often and daily, keeps a self-portrait (its personality,`,
+    `  the people who matter, open threads), and decides by itself when to write, to whom, or what to plan for later`,
+    `  (intentions: scheduled checks with a why), following human customs (birthdays, wishes, check-ins, tact, timing).`,
+    `  It also works on itself like a person with goals: it breaks its purpose into long-term, quarter, month, week and day`,
+    `  goals with measures and steps (its plan), reviews them daily (at dayStartsAt) and weekly, monthly, quarterly, studies`,
+    `  what it lacks and writes its own skills.`,
+    `  Set it with update_agent ({ drive: { enabled, purpose, goals?, autonomy?: "propose" | "balanced" | "act",`,
+    `  reflectEveryMinutes?, dayStartsAt? } }). "What is X up to / what does it plan?" → get_agent_drive; "have X think about it now" →`,
+    `  reflect_agent; proposed intentions wait for a yes → confirm_check or cancel_check.`,
     `- **Reactions**: on Telegram an answer that is a single emoji becomes a reaction on the message.`,
   );
 
