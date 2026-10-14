@@ -4,6 +4,8 @@ import {
   connect,
   disconnect,
   draftFromMission,
+  draftWarnings,
+  isValidDuration,
   missionFromDraft,
   parseNodeId,
   removeNodes,
@@ -108,5 +110,22 @@ describe("playbook graph editing", () => {
     expect(mission).not.toHaveProperty("checkpoints");
     expect(mission).not.toHaveProperty("delays");
     expect((mission.tasks as { title: string }[]).map((t) => t.title)).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("delay durations", () => {
+  test("ISO 8601 durations are valid in any case; empty or malformed ones are not", () => {
+    for (const ok of ["PT30S", "PT1s", "pt30m", "P1D", "P1DT6H"]) expect(isValidDuration(ok)).toBe(true);
+    for (const bad of ["P", "PT", "1h", "PT1X", "", "soon"]) expect(isValidDuration(bad)).toBe(false);
+  });
+
+  test("an invalid duration is reported before saving", () => {
+    const draft: GraphDraft = {
+      base: {},
+      tasks: [{ title: "A", description: "a", assignTo: "dev" }, { title: "B", description: "b", assignTo: "dev" }],
+      checkpoints: [],
+      delays: [{ name: "wait", afterTasks: ["A"], blocksTasks: ["B"], duration: "soon" }],
+    } as unknown as GraphDraft;
+    expect(draftWarnings(draft).some((w) => w.includes("invalid duration"))).toBe(true);
   });
 });
