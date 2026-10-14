@@ -655,3 +655,95 @@ describe("Checkpoints", () => {
     });
   });
 });
+
+describe("Missions that share a name (created before names were unique)", () => {
+  let ctx: OrchestratorContext;
+  let missionExec: MissionExecutor;
+  let taskMgr: TaskManager;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "polpo-test-shared-"));
+    ctx = createMockCtx({
+      polpoDir: tmpDir,
+      checkpointStore: new FileCheckpointStore(tmpDir),
+      delayStore: new FileDelayStore(tmpDir),
+    });
+    taskMgr = new TaskManager(ctx);
+    missionExec = new MissionExecutor(ctx, taskMgr, new AgentManager(ctx));
+    await missionExec.ready;
+  });
+
+  afterEach(() => {
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  /** Saved straight in the store, as before saveMission gave every mission its own name. */
+  const legacyMission = (status: Mission["status"]) =>
+    ctx.registry.saveMission!({ name: "report", data: JSON.stringify({ tasks: [] }), status });
+
+  async function addRunTask(missionId: string, title: string, status: Task["status"]): Promise<Task> {
+    const task = createTestTask({ title, group: "report", missionId, status });
+    (await ctx.registry.getState()).tasks.push(task);
+    return task;
+  }
+
+  it("completes each mission on its own", async () => {
+    const first = await legacyMission("completed");
+    const second = await legacyMission("active");
+    const third = await legacyMission("active");
+    for (const m of [first, second, third]) await addRunTask(m.id, "Draft", "done");
+
+    await missionExec.cleanupCompletedGroups(await ctx.registry.getAllTasks());
+
+    expect((await ctx.registry.getMission!(second.id))?.status).toBe("completed");
+    expect((await ctx.registry.getMission!(third.id))?.status).toBe("completed");
+  });
+
+  it("completes after a restart a mission left active with all its tasks finished", async () => {
+    const stuck = await legacyMission("active");
+    await addRunTask(stuck.id, "Draft", "done");
+
+    const restarted = new MissionExecutor(ctx, taskMgr, new AgentManager(ctx));
+    await restarted.ready;
+    await restarted.cleanupCompletedGroups(await ctx.registry.getAllTasks());
+
+    expect((await ctx.registry.getMission!(stuck.id))?.status).toBe("completed");
+  });
+
+  it("aborts only the given mission, also when it is paused", async () => {
+    const running = await legacyMission("active");
+    const paused = await legacyMission("paused");
+    const runningTask = await addRunTask(running.id, "Publish", "pending");
+    await addRunTask(paused.id, "Publish", "pending");
+
+    await taskMgr.abortGroup("report", paused.id);
+
+    expect((await ctx.registry.getMission!(paused.id))?.status).toBe("cancelled");
+    expect((await ctx.registry.getMission!(running.id))?.status).toBe("active");
+    expect((await ctx.registry.getTask(runningTask.id))?.status).toBe("pending");
+  });
+
+  it("deletes only the tasks of the deleted mission", async () => {
+    const kept = await legacyMission("completed");
+    const deleted = await legacyMission("completed");
+    const keptTask = await addRunTask(kept.id, "Draft", "done");
+    await addRunTask(deleted.id, "Draft", "done");
+
+    await missionExec.deleteMission(deleted.id);
+
+    expect((await ctx.registry.getAllTasks()).map((t) => t.id)).toEqual([keptTask.id]);
+  });
+
+  it("restores the checkpoints of a paused mission from its data after a restart", async () => {
+    const checkpoint: MissionCheckpoint = { name: "review", afterTasks: ["Draft"], blocksTasks: ["Publish"] };
+    expect(missionExec.getCheckpoints("report")).toEqual([]);
+
+    const restored = await missionExec.restoreCheckpointDefinitions("report", JSON.stringify({ tasks: [], checkpoints: [checkpoint] }));
+    expect(restored).toEqual([checkpoint]);
+
+    const restarted = new MissionExecutor(ctx, taskMgr, new AgentManager(ctx));
+    await restarted.ready;
+    expect(restarted.getCheckpoints("report")).toEqual([checkpoint]);
+  });
+});
