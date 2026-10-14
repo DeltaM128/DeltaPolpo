@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Mission actions:** a Delete button, with confirmation, on the mission page, and Abort also on a mission paused at a checkpoint.
 - **Checkpoints in the dashboard:** a mission paused at a checkpoint opens an approval request (Approvals page, sidebar badge, history, `/approve`). Approving it resumes the mission; rejecting it aborts the mission. The mission page shows the pause with an "Approve and continue" button. Resuming, aborting or deleting the mission closes the request. Before, a paused mission could be resumed only through the API.
 - **Live pipeline view** (Tasks → a task → Pipeline): for tasks of an agent with a pipeline, each step is colored by its state (running, waiting for approval, done, failed, skipped or stopped), with attempts, retry feedback, errors and the shared context. It updates live while the task runs and stays available after it ends.
 - **Pipeline editor** (Agents → an agent → Pipeline): define the agent's loops and its pipeline as a top-down flow. Insert loops, parallel branches, switches and human approvals with the "+" on the arrows, edit them in a side panel, and see problems (unknown loops, empty branches, duplicate approval names) on the nodes; they block saving. `PATCH /agents/:name` accepts `pipeline: null` to remove the pipeline and rejects pipelines that reference unknown loops.
