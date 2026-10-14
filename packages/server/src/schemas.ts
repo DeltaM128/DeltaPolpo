@@ -372,6 +372,25 @@ const PipelineSchema = z.object({
 
 const AgentLoopsSchema = z.record(z.string().min(1), LoopConfigSchema);
 
+/** Loop names referenced by `loop` steps anywhere in a pipeline. */
+export function pipelineLoopRefs(steps: unknown[]): string[] {
+  const refs: string[] = [];
+  const walk = (list: unknown[]) => {
+    for (const step of list) {
+      if (!step || typeof step !== "object") continue;
+      const s = step as Record<string, any>;
+      if (typeof s.loop === "string") refs.push(s.loop);
+      if (Array.isArray(s.parallel)) walk(s.parallel);
+      if (s.switch) {
+        for (const c of s.switch.cases ?? []) walk(c.steps ?? []);
+        if (s.switch.default) walk(s.switch.default.steps ?? []);
+      }
+    }
+  };
+  walk(steps);
+  return refs;
+}
+
 export const AddAgentSchema = z.object({
   name: z.string().min(1).refine((n) => !n.trim().startsWith("$"), { message: 'Agent names starting with "$" are reserved' }),
   role: z.string().optional(),
@@ -428,7 +447,8 @@ export const UpdateAgentSchema = z.object({
   }).strict().optional(),
   runtime: z.string().min(1).optional(),
   loops: AgentLoopsSchema.optional(),
-  pipeline: PipelineSchema.optional(),
+  /** null removes the pipeline: the agent then runs tasks as a single session again. */
+  pipeline: PipelineSchema.nullable().optional(),
   browserProfile: z.string().optional(),
   emailAllowedDomains: z.array(z.string()).optional(),
   team: z.string().optional(),
