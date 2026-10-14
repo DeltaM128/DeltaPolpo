@@ -67,7 +67,7 @@ import { createBrowserNetworkGuard, type BrowserNetworkGuard } from "../tools/br
 import { NetworkDeniedLog, type NetworkDeniedReport } from "../sandbox/denied-log.js";
 import { HookRegistry } from "./hooks.js";
 import { ApprovalManager } from "./approval-manager.js";
-import { PIPELINE_GATE_PREFIX } from "@polpo-ai/core/approval-manager";
+import { CHECKPOINT_GATE_PREFIX, PIPELINE_GATE_PREFIX, isCheckpointGate } from "@polpo-ai/core/approval-manager";
 import { FileApprovalStore } from "../stores/file-approval-store.js";
 import { FileCheckpointStore } from "../stores/file-checkpoint-store.js";
 import { FileDelayStore } from "../stores/file-delay-store.js";
@@ -153,6 +153,11 @@ function supportsBackgroundWaits(store: TaskControlStore): store is TaskControlS
     && typeof store.requeueBackgroundWait === "function"
     && typeof store.cancelBackgroundWait === "function"
     && typeof store.recoverBackgroundWaits === "function";
+}
+
+/** Gate id of the approval that stands for a checkpoint of a mission group. */
+function checkpointGateId(group: string, checkpointName: string): string {
+  return `${CHECKPOINT_GATE_PREFIX}${group}:${checkpointName}`;
 }
 
 export class Orchestrator extends TypedEmitter {
@@ -1205,6 +1210,25 @@ export class Orchestrator extends TypedEmitter {
       void this.closePipelineApprovals(taskId, to).catch((err) =>
         this.emit("log", { level: "warn", message: `[pipeline] closing approvals of ${taskId} failed: ${err instanceof Error ? err.message : String(err)}` }));
     });
+
+    // A mission paused at a checkpoint is also a regular approval (Approvals page, badge,
+    // history, /approve): approving it resumes the mission, rejecting it aborts the mission.
+    const warnCheckpoint = (err: unknown) =>
+      this.emit("log", { level: "warn", message: `[checkpoint] approval sync failed: ${err instanceof Error ? err.message : String(err)}` });
+    this.on("checkpoint:reached", (e) => {
+      void this.openCheckpointApproval(e.group, e.checkpointName, e.missionId, e.message, e.afterTasks, e.blocksTasks).catch(warnCheckpoint);
+    });
+    this.on("checkpoint:resumed", (e) => {
+      void this.closeCheckpointApprovals((r) => r.gateId === checkpointGateId(e.group, e.checkpointName), "approved", "Resumed with Approve and continue (or a channel command)").catch(warnCheckpoint);
+    });
+    this.on("approval:resolved", (e) => { void this.applyCheckpointDecision(e.requestId).catch(warnCheckpoint); });
+    this.on("mission:aborted", (e) => {
+      void this.closeCheckpointApprovals((r) => r.gateId.startsWith(checkpointGateId(e.group, "")), "rejected", "Closed: the mission was aborted").catch(warnCheckpoint);
+    });
+    this.on("mission:deleted", (e) => {
+      void this.closeCheckpointApprovals((r) => r.missionId === e.missionId, "rejected", "Closed: the mission was deleted").catch(warnCheckpoint);
+    });
+    void this.syncCheckpointApprovals().catch(warnCheckpoint);
 
     if (supportsBackgroundWaits(this.taskControlStore)) {
       this.backgroundWaitMgr = new BackgroundWaitManager(this, this.registry, this.taskControlStore);
@@ -2362,6 +2386,71 @@ export class Orchestrator extends TypedEmitter {
       }
     }
     return { ok: true, status: "pending" };
+  }
+
+  /** Open the approval of a reached checkpoint, unless one is already pending. */
+  private async openCheckpointApproval(
+    group: string, checkpointName: string, missionId: string | undefined,
+    message: string | undefined, afterTasks: string[], blocksTasks: string[],
+  ): Promise<void> {
+    const mgr = this.approvalMgr;
+    if (!mgr) return;
+    const gateId = checkpointGateId(group, checkpointName);
+    if ((await mgr.getPending()).some((r) => r.gateId === gateId)) return;
+    await mgr.requestHumanApproval({
+      gateId,
+      gateName: `Checkpoint "${checkpointName}" · ${group}`,
+      missionId,
+      payload: { kind: "checkpoint", group, checkpointName, message, afterTasks, blocksTasks },
+    });
+  }
+
+  /** Resolve the pending checkpoint approvals matching `match` (their checkpoint already moved on). */
+  private async closeCheckpointApprovals(
+    match: (r: { gateId: string; missionId?: string }) => boolean,
+    status: "approved" | "rejected", note: string,
+  ): Promise<void> {
+    const mgr = this.approvalMgr;
+    if (!mgr) return;
+    for (const r of await mgr.getPending()) {
+      if (!isCheckpointGate(r.gateId) || !match(r)) continue;
+      if (status === "approved") await mgr.approve(r.id, "system", note);
+      else await mgr.reject(r.id, note, "system");
+    }
+  }
+
+  /** A person decided on a checkpoint approval: resume or abort its mission. */
+  private async applyCheckpointDecision(requestId: string): Promise<void> {
+    const request = await this.approvalMgr?.getRequest(requestId);
+    // "system" resolutions follow a resume/abort that already happened.
+    if (!request || !isCheckpointGate(request.gateId) || request.resolvedBy === "system") return;
+    const { group, checkpointName } = (request.payload ?? {}) as { group?: string; checkpointName?: string };
+    if (!group || !checkpointName) return;
+    if (request.status === "approved") {
+      await this.resumeCheckpoint(group, checkpointName);
+      return;
+    }
+    if (request.status === "rejected") {
+      const mission = request.missionId ? await this.getMission(request.missionId) : await this.getMissionByName(group);
+      if (mission && (mission.status === "active" || mission.status === "paused")) {
+        await this.abortGroup(group, mission.id);
+      }
+    }
+  }
+
+  /** Checkpoints paused before approvals existed for them (or before a restart) get one now. */
+  private async syncCheckpointApprovals(): Promise<void> {
+    await this.missionExec.ready;
+    for (const cp of this.engine.getActiveCheckpoints()) {
+      const mission = await this.resolveMissionOfGroup(cp.group);
+      await this.openCheckpointApproval(cp.group, cp.checkpointName, mission?.id, cp.checkpoint.message, cp.checkpoint.afterTasks, cp.checkpoint.blocksTasks);
+    }
+  }
+
+  /** The mission of a task group (via its tasks' mission id, else by name). */
+  private async resolveMissionOfGroup(group: string): Promise<Mission | undefined> {
+    const mid = (await this.registry.getAllTasks()).find((t) => t.group === group && t.missionId)?.missionId;
+    return mid ? this.getMission(mid) : this.getMissionByName(group);
   }
 
   /** Reject the pending pipeline approvals of a task that is no longer running. */
