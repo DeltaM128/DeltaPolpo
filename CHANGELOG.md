@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The model list of the Add agent dialog was empty in the desktop app: the model picker called the API with a relative path, which does not reach the server from a page loaded from `file://`.
 - `ui/server.mjs` did not work on Windows: every file, including the JavaScript and CSS in `/assets`, was served as `index.html`, because the path check expected `/` separators, and the default static root was built from a URL path (`/D:/...`). The server now uses the platform's paths and still refuses paths outside the static root.
 
+### Security
+- **Task agents could read and write the project's `.polpo` folder.** The file tools keep agents out of `.polpo` (configuration, `.env`, vault, sessions, storage mounts), but the guard was only switched on in the server process. Tasks run in a separate runner process, where it was off: an agent with the default access (its working directory) could read `.polpo/.env` or the vault file and write anywhere in `.polpo`. The runner now sets the same guard before building the agent's tools, with the same exceptions (offloaded tool outputs, skills, playbooks). A task output folder that lies inside `.polpo` stays writable: it is now granted explicitly.
+
 ## [0.4.6-delta.1] — 2026-10-13 — DeltaPolpo
 
 First release of **DeltaPolpo**, a fork of Polpo 0.4.6 focused on visual workflows, local models and a Windows desktop installer. See [DELTAPOLPO.md](DELTAPOLPO.md).
