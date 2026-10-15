@@ -628,6 +628,12 @@ export interface ReviewContext {
   // --- Registered outcomes ---
   /** Explicit outcomes registered by the agent (files, text, URLs, JSON data). */
   outcomes?: TaskOutcome[];
+
+  /**
+   * The task's output folder (absolute). test and script checks get it as POLPO_OUTPUT_DIR, and
+   * file_exists paths may start with $POLPO_OUTPUT_DIR: the folder of a run is not known in advance.
+   */
+  outputDir?: string;
 }
 
 // === Ask User (structured clarification questions) ===
