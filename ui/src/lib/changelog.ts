@@ -39,8 +39,9 @@ export const CHANGELOG: ChangelogEntry[] = [
       "- **Un'attesa scritta male** (come `PT1s`) non blocca più tutte le missioni.",
       "- **Dashboard**: la pagina della missione e le Approvazioni si aggiornano da sole, e la lista agenti mostra subito le modifiche.",
       "- **App desktop**: la lista dei modelli in *Aggiungi agente* non è più vuota.",
+      "- **Vocali su Telegram in privato**: vengono trascritti appena arrivano, come nei gruppi, e il testo resta nella conversazione. Prima Polpo poteva \"perdere\" il contenuto del vocale al messaggio successivo.",
       "",
-      "Grazie a **DeltaM128**, che li ha trovati e corretti.",
+      "Grazie a **DeltaM128**, che ha trovato e corretto gran parte di questi problemi.",
     ].join("\n"),
   },
   {
