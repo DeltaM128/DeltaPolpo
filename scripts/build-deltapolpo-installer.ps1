@@ -1,4 +1,5 @@
 # Builds the DeltaPolpo Windows installer (ui/release/DeltaPolpo-Setup-<version>.exe).
+# Every build raises the last number of the version in scripts/deltapolpo-version.txt by one.
 #
 # Same pipeline as the upstream desktop release (.github/workflows/desktop-check.yml), for Windows:
 #   1. build the workspace packages and the server (dist/)
@@ -57,8 +58,13 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
 }
 Write-Host "node $(node --version), pnpm $(pnpm --version), bun $(bun --version)"
 
-$Version = node -p "require('./package.json').version"
-Write-Host "DeltaPolpo version $Version"
+# Each installer gets the next version: the last number of scripts/deltapolpo-version.txt goes up by
+# one, saved only once the installer is built. Kept apart from package.json (Polpo's own version).
+$VersionFile = Join-Path $PSScriptRoot "deltapolpo-version.txt"
+$PreviousVersion = (Get-Content $VersionFile -Raw).Trim()
+if ($PreviousVersion -notmatch '^(\d+(?:\.\d+)*)\.(\d+)$') { throw "Unreadable version in ${VersionFile}: '$PreviousVersion'" }
+$Version = "$($Matches[1]).$([int]$Matches[2] + 1)"
+Write-Host "DeltaPolpo version $Version (previous installer: $PreviousVersion)"
 
 # ── 1. Packages and server ──────────────────────────────────────────
 
@@ -118,6 +124,7 @@ try {
 
 $Installer = Join-Path $Root "ui\release\DeltaPolpo-Setup-$Version.exe"
 if (-not (Test-Path $Installer)) { throw "Installer not found: $Installer" }
+Set-Content -Path $VersionFile -Value $Version -Encoding ascii
 Write-Host ""
 Write-Host "Installer ready: $Installer" -ForegroundColor Green
 Write-Host ("Size: {0:N0} MB" -f ((Get-Item $Installer).Length / 1MB))
