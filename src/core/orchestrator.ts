@@ -1226,7 +1226,6 @@ export class Orchestrator extends TypedEmitter {
     this.on("mission:deleted", (e) => {
       void this.closeCheckpointApprovals((r) => r.missionId === e.missionId, "rejected", "Closed: the mission was deleted").catch(warnCheckpoint);
     });
-    void this.syncCheckpointApprovals().catch(warnCheckpoint);
 
     if (supportsBackgroundWaits(this.taskControlStore)) {
       this.backgroundWaitMgr = new BackgroundWaitManager(this, this.registry, this.taskControlStore);
@@ -1259,6 +1258,9 @@ export class Orchestrator extends TypedEmitter {
       escalationManager: this.escalationMgr,
       deadlockResolver,
     });
+
+    // Needs the engine (mission lookups): only once it exists.
+    void this.syncCheckpointApprovals().catch(warnCheckpoint);
   }
 
   /**
