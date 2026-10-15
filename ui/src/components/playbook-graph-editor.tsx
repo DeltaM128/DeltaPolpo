@@ -48,6 +48,7 @@ import {
   missionFromDraft,
   nodeKey,
   parseNodeId,
+  reconnect,
   removeNodes,
   updateGate,
   updateTask,
@@ -61,12 +62,15 @@ import {
   DelayNodeComponent,
   TaskNodeComponent,
 } from "@/pages/mission-detail";
+import { EditableEdge } from "@/components/playbook-editable-edge";
 
 const nodeTypes = {
   taskNode: TaskNodeComponent,
   checkpointNode: CheckpointNodeComponent,
   delayNode: DelayNodeComponent,
 };
+
+const edgeTypes = { editable: EditableEdge };
 
 const noLiveTask = () => undefined;
 
@@ -140,7 +144,7 @@ export function PlaybookGraphEditor({
         };
       });
     });
-    setEdges(layout.edges.map((e) => ({ ...e, deletable: true, interactionWidth: 16 })));
+    setEdges(layout.edges.map((e) => ({ ...e, type: "editable", deletable: true, reconnectable: true, interactionWidth: 24 })));
   }, [draft, positions, selected, setNodes, setEdges]);
 
   const apply = useCallback((result: EditResult) => {
@@ -160,6 +164,18 @@ export function PlaybookGraphEditor({
     const target = parseNodeId(c.target);
     if (!source || !target) return;
     apply(connect(draft, source, target));
+  }, [draft, apply]);
+
+  // A connection's end dragged to another node: the old dependency goes, the new one comes,
+  // in one edit (refused as a whole if the new one is not allowed, e.g. a cycle).
+  const onReconnect = useCallback((oldEdge: Edge, c: Connection) => {
+    const oldSource = parseNodeId(oldEdge.source);
+    const oldTarget = parseNodeId(oldEdge.target);
+    const source = parseNodeId(c.source);
+    const target = parseNodeId(c.target);
+    if (!oldSource || !oldTarget || !source || !target) return;
+    if (oldEdge.source === c.source && oldEdge.target === c.target) return;
+    apply(reconnect(draft, { source: oldSource, target: oldTarget }, source, target));
   }, [draft, apply]);
 
   // One handler for nodes and edges: React Flow deletes a node's edges together
@@ -294,13 +310,16 @@ export function PlaybookGraphEditor({
 
       <div className="flex min-h-0 flex-1">
         {/* Canvas */}
-        <div ref={wrapperRef} className="min-w-0 flex-1">
+        {/* A connection under the pointer lights up: it is thin and easy to miss otherwise. */}
+        <div ref={wrapperRef} className="min-w-0 flex-1 [&_.react-flow__edge-editable:hover_.react-flow__edge-path]:![stroke:var(--primary)] [&_.react-flow__edge-editable:hover_.react-flow__edge-path]:![stroke-width:2.5]">
           <ReactFlow
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
+            onReconnect={onReconnect}
+            edgeTypes={edgeTypes}
             onEdgesChange={onEdgesChange}
             onDelete={onDelete}
             onNodeDragStop={onNodeDragStop}
@@ -310,6 +329,7 @@ export function PlaybookGraphEditor({
             nodesDraggable
             nodesConnectable
             edgesFocusable
+            edgesReconnectable
             fitView
             fitViewOptions={{ padding: 0.2 }}
             minZoom={0.2}
@@ -330,7 +350,7 @@ export function PlaybookGraphEditor({
               />
             )}
             <Panel position="bottom-center" className="mb-3 rounded bg-background/80 px-2 py-1 text-[10px] text-muted-foreground max-xl:!hidden">
-              Drag from a node&apos;s bottom handle to another node&apos;s top handle to connect · Select and press Delete to remove
+              Drag from a node&apos;s bottom handle to another node&apos;s top handle to connect · Click a connection: × removes it, drag its ends to move it
             </Panel>
           </ReactFlow>
         </div>

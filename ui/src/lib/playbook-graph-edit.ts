@@ -152,6 +152,14 @@ export function disconnect(draft: GraphDraft, source: GraphNodeRef, target: Grap
   return next;
 }
 
+/**
+ * Move a connection: drop the old one and add the new one in a single edit, refused as a whole
+ * (the old connection stays) when the new one is not allowed, e.g. it would create a cycle.
+ */
+export function reconnect(draft: GraphDraft, old: { source: GraphNodeRef; target: GraphNodeRef }, source: GraphNodeRef, target: GraphNodeRef): EditResult {
+  return connect(disconnect(draft, old.source, old.target), source, target);
+}
+
 // ── Add / remove nodes ──
 
 function uniqueName(base: string, taken: Iterable<string>): string {
