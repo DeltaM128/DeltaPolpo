@@ -52,6 +52,15 @@ const NODE_HEIGHT = 140;
 const H_GAP = 60;
 const V_GAP = 80;
 
+/**
+ * A rebuilt node with the size React Flow already measured for the node it replaces. React Flow
+ * hides a node whose size is unknown and measures it again only when its size changes, so a graph
+ * rebuilt from scratch (new node objects, same sizes) stayed invisible, edges included.
+ */
+export function withMeasured(node: Node, previous: Node | undefined): Node {
+  return previous?.measured && !node.measured ? { ...node, measured: previous.measured } : node;
+}
+
 export function buildGraphLayout(
   taskDefs: MissionTaskDef[],
   findLive: (title: string) => Task | undefined,
