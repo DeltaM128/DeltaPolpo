@@ -6,6 +6,7 @@ import {
   draftFromMission,
   missionFromDraft,
   parseNodeId,
+  reconnect,
   removeNodes,
   updateGate,
   updateTask,
@@ -49,6 +50,23 @@ describe("playbook graph editing", () => {
     // C is blocked by the checkpoint that waits for B, so C → B is a cycle.
     expect(connect(draft, T(2), T(1)).error).toMatch(/cycle/);
     expect(connect(draft, T(0), T(0)).error).toBeDefined();
+  });
+
+  test("a connection can be removed, or moved to another node in one edit", () => {
+    const draft = baseDraft();
+    expect(disconnect(draft, T(0), T(1)).tasks[1].dependsOn).toEqual([]);
+
+    // A → B moved to A → C: B no longer waits for A, C does
+    const moved = reconnect(draft, { source: T(0), target: T(1) }, T(0), T(2));
+    expect(moved.error).toBeUndefined();
+    expect(moved.draft!.tasks[1].dependsOn).toEqual([]);
+    expect(moved.draft!.tasks[2].dependsOn).toEqual(["A"]);
+    expect(draft.tasks[1].dependsOn).toEqual(["A"]);
+
+    // A move that would close a cycle is refused as a whole: the old connection stays
+    const refused = reconnect(draft, { source: T(0), target: T(1) }, T(2), T(1));
+    expect(refused.error).toMatch(/cycle/);
+    expect(refused.draft).toBeUndefined();
   });
 
   test("task ↔ checkpoint connections edit afterTasks and blocksTasks", () => {

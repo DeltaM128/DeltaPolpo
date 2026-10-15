@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The mission page refreshed the mission only on the first change of a run: nothing cleared the "missions stale" flag when the missions list was not mounted. Checkpoint events now also update the mission status (paused / active), and an abort refreshes it.
 - The Approvals page went blank (counters back to 0) at every refresh: `useApprovals` showed the loading state on every refetch. It now does so only on the first load.
 - The agents list kept a stale ETag after an agent's configuration changed, so browsers kept showing the old agents. The ETag now depends on the content.
+- **Playbook editor connections can be removed and moved.** A connection between two nodes could only be removed by selecting it and pressing Delete, and nothing showed it was selected (its colour hid the selection), so it looked impossible to change. A selected connection is now highlighted and shows a × button that removes it; a connection under the pointer lights up and is easier to hit; and its ends can be dragged to another node to move it (refused, keeping the old one, if the new one would create a cycle).
 
 ## [0.4.9] — 2026-10-14 — Routine
 
