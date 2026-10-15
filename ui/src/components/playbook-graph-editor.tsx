@@ -38,6 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CommitInput, CommitTextarea, Field } from "@/components/editor-fields";
 import { buildGraphLayout } from "@/lib/mission-graph";
+import { withMeasured } from "@/lib/graph-nodes";
 import {
   addNode,
   connect,
@@ -126,18 +127,19 @@ export function PlaybookGraphEditor({
     relayoutRef.current = false;
     setNodes((previous) => {
       const onScreen = new Map<string, XYPosition>();
-      if (!relayout) {
-        for (const n of previous) {
-          const key = keyOfNode(n);
-          if (key) onScreen.set(key, n.position);
-        }
+      const shown = new Map<string, Node>();
+      for (const n of previous) {
+        const key = keyOfNode(n);
+        if (!key) continue;
+        shown.set(key, n);
+        if (!relayout) onScreen.set(key, n.position);
       }
       return layout.nodes.map((node) => {
         const ref = parseNodeId(node.id);
         const key = ref ? nodeKey(draft, ref) : null;
         const isSelected = !!ref && !!selected && ref.kind === selected.kind && ref.index === selected.index;
         return {
-          ...node,
+          ...withMeasured(node, key ? shown.get(key) : undefined),
           position: (key && (positions[key] ?? onScreen.get(key))) || node.position,
           selected: isSelected,
         };

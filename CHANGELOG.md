@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Approvals page went blank (counters back to 0) at every refresh: `useApprovals` showed the loading state on every refetch. It now does so only on the first load.
 - The agents list kept a stale ETag after an agent's configuration changed, so browsers kept showing the old agents. The ETag now depends on the content.
 - **Playbook editor connections can be removed and moved.** A connection between two nodes could only be removed by selecting it and pressing Delete, and nothing showed it was selected (its colour hid the selection), so it looked impossible to change. A selected connection is now highlighted and shows a × button that removes it; a connection under the pointer lights up and is easier to hit; and its ends can be dragged to another node to move it (refused, keeping the old one, if the new one would create a cycle).
+- **The mission graph disappeared when a run paused at a checkpoint** (nodes and connections gone, only the background left). On every status update the graph was rebuilt with new node objects that had lost the size React Flow had measured; React Flow hides a node of unknown size and measures it again only when its size changes. Task cards change size with their status, so they came back, but at a checkpoint nothing changed size and the whole graph stayed hidden. The rebuilt nodes now keep their measured size (mission page and playbook editor).
 
 ## [0.4.9] — 2026-10-14 — Routine
 
