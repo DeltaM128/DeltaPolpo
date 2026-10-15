@@ -126,6 +126,7 @@
       "category": "Development"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ],
