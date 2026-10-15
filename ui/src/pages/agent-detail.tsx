@@ -16,6 +16,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  AlertTriangle,
   Bot,
   Brain,
   Loader2,
@@ -29,6 +30,7 @@ import { AgentAvatar } from "@/components/shared/agent-avatar";
 import { AgentDetailProvider } from "@/components/agents/agent-detail-provider";
 import { useAgentDetail } from "@/components/agents/agent-detail-context";
 import { cn } from "@/lib/utils";
+import { pipelineWarnings } from "@/lib/pipeline-edit";
 
 // Sidebar cards
 import { AgentHeroCard } from "@/components/agents/agent-hero-card";
@@ -125,6 +127,7 @@ function AgentDetailContent() {
   // ?tab=credentials opens a tab directly (e.g. from a vault picker's "add it" link)
   const [searchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") ?? "overview";
+  const pipelineWarning = agent.pipeline ? pipelineWarnings(agent.pipeline).join("\n") : "";
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -165,6 +168,11 @@ function AgentDetailContent() {
           <TabsTrigger value="pipeline">
             <Workflow className="h-3.5 w-3.5 mr-1" />
             Pipeline
+            {pipelineWarning && (
+              <span title={pipelineWarning} className="ml-1 text-amber-500">
+                <AlertTriangle className="h-3.5 w-3.5" />
+              </span>
+            )}
           </TabsTrigger>
           <TabsTrigger value="learning">Learning</TabsTrigger>
           <TabsTrigger value="goals">Goals</TabsTrigger>

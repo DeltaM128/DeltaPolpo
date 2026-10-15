@@ -209,6 +209,21 @@ export interface PipelineProblem {
   message: string;
 }
 
+/**
+ * A pipeline without loop steps never runs the agent: its tasks finish as done after the
+ * approvals alone, with no work done. Allowed (it saves and runs), so a warning, not a problem.
+ */
+export const NO_LOOP_WARNING =
+  "No step runs the agent: its tasks will finish as done after the approvals alone, without doing any work. Add a loop step.";
+
+/** Warnings about a pipeline that saves and runs but probably does not do what was meant. */
+export function pipelineWarnings(pipeline: Pipeline): string[] {
+  if (pipeline.steps.length === 0) return [];
+  let runsAgent = false;
+  forEachStep(pipeline, (step) => { if ("loop" in step) runsAgent = true; });
+  return runsAgent ? [] : [NO_LOOP_WARNING];
+}
+
 /** Problems that would make the server or the runtime reject the pipeline. */
 export function validatePipeline(pipeline: Pipeline, loops: Record<string, LoopConfig>): PipelineProblem[] {
   const problems: PipelineProblem[] = [];

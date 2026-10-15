@@ -46,6 +46,7 @@ import {
   updateCaseWhen,
   updateStep,
   validatePipeline,
+  pipelineWarnings,
   loopUsages,
   type Path,
   type StepKind,
@@ -117,6 +118,7 @@ function PipelineEditor({
 
   const dirty = JSON.stringify({ loops, pipeline }) !== JSON.stringify(baseline);
   const problems = useMemo(() => (pipeline ? validatePipeline(pipeline, loops) : []), [pipeline, loops]);
+  const warnings = useMemo(() => (pipeline ? pipelineWarnings(pipeline) : []), [pipeline]);
   const problemsByPath = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const p of problems) {
@@ -165,6 +167,7 @@ function PipelineEditor({
       await updateAgent(agentName, { loops, pipeline: pipeline ?? null });
       setBaseline({ loops, pipeline });
       toast.success(pipeline ? "Pipeline saved" : "Pipeline removed");
+      for (const w of warnings) toast.warning(w);
       await onSaved();
     } catch (e) {
       toast.error(`Save failed: ${(e as Error).message}`);
@@ -235,6 +238,11 @@ function PipelineEditor({
   return (
     <div className="flex h-full min-h-[480px] flex-col overflow-hidden rounded-lg border border-border/40">
       {toolbar}
+      {warnings.length > 0 && (
+        <div className="shrink-0 border-b border-border/40 px-3 py-2">
+          <ProblemList problems={warnings} />
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">
           <ReactFlow
