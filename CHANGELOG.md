@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.10] — 2026-10-15 — Fixes from DeltaPolpo
+
+Thanks to @DeltaM128, who found and fixed all of these in the DeltaPolpo fork (#127; #133–#137, #144, #145).
+
 ### Added
 - **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
 
