@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:net";
-import { spawnPipeline, agentForLoop, taskForLoop, splitOutcomes, hasPipeline } from "../adapters/pipeline.js";
+import { spawnPipeline, agentForLoop, taskForLoop, splitOutcomes, hasPipeline, pipelineRunsAgent, NO_LOOP_WARNING } from "../adapters/pipeline.js";
 import { createActivity } from "../adapters/engine.js";
 import { createHumanRelay } from "../core/pipeline/human-relay.js";
 import { startNotificationServer, getSocketPath, type PipelineHumanMessage, type PipelineHumanReply } from "../core/notification.js";
@@ -139,6 +139,25 @@ describe("pipeline adapter", () => {
     expect(state.steps["steps.1.switch.cases.0.steps.0"]).toMatchObject({ kind: "human", status: "done", approvalId: "appr-1" });
     expect(state.steps["steps.1.switch.cases.0.steps.1"]).toMatchObject({ kind: "loop", status: "done" });
     expect(state.steps["steps.1.switch.default.steps.0"]).toBeUndefined();
+  });
+
+  it("warns when no step runs the agent: the task would end after the approvals alone", async () => {
+    expect(pipelineRunsAgent(agent.pipeline!.steps)).toBe(true);
+    expect(pipelineRunsAgent([{ switch: { cases: [{ when: "x", steps: [{ human: "a" }] }], default: { steps: [{ loop: "resolve" }] } } }])).toBe(true);
+    expect(pipelineRunsAgent([{ human: "approval" }, { parallel: [{ human: "b" }] }])).toBe(false);
+
+    const { spawn, spawned } = fakeEngine([]);
+    const approvalOnly: AgentConfig = { name: "reviewer", loops: {}, pipeline: { steps: [{ human: "approval" }] } };
+    const result = await spawnPipeline(approvalOnly, task, "/work", undefined, { spawn, requestHuman: async () => ({ approved: true }) }).done;
+    expect(result.exitCode).toBe(0);
+    expect(spawned).toHaveLength(0);
+    expect(result.stdout).toContain(NO_LOOP_WARNING);
+
+    const withLoop = await spawnPipeline(agent, task, "/work", undefined, {
+      spawn: fakeEngine([() => ({ exitCode: 0, outcomes: [outcome("context", { ticket: { category: "other" } })] }), () => ({ exitCode: 0 })]).spawn,
+      requestHuman: async () => ({ approved: true }),
+    }).done;
+    expect(withLoop.stdout).not.toContain(NO_LOOP_WARNING);
   });
 
   it("fails the task when a loop session fails", async () => {

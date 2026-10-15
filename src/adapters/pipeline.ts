@@ -12,7 +12,7 @@
  */
 
 import { nanoid } from "nanoid";
-import type { AgentActivity, AgentConfig, LoopConfig, PipelineRunState, Task, TaskOutcome, TaskResult } from "../core/types.js";
+import type { AgentActivity, AgentConfig, LoopConfig, PipelineRunState, PipelineStep, Task, TaskOutcome, TaskResult } from "../core/types.js";
 import type { AgentHandle, SpawnContext } from "../core/adapter.js";
 import { spawnEngine, createActivity } from "./engine.js";
 import {
@@ -69,6 +69,23 @@ export interface PipelineSpawnOptions {
 export function hasPipeline(agent: AgentConfig): boolean {
   return !!agent.pipeline && Array.isArray(agent.pipeline.steps) && agent.pipeline.steps.length > 0;
 }
+
+/**
+ * Whether any step of the pipeline runs the agent (a loop step, at any depth). Without one the
+ * task ends as done after the human steps alone, with no work done: allowed, but worth a warning.
+ */
+export function pipelineRunsAgent(steps: PipelineStep[]): boolean {
+  return steps.some((step) => {
+    if ("loop" in step) return true;
+    if ("parallel" in step) return pipelineRunsAgent(step.parallel);
+    if ("switch" in step) {
+      return step.switch.cases.some((c) => pipelineRunsAgent(c.steps)) || pipelineRunsAgent(step.switch.default?.steps ?? []);
+    }
+    return false;
+  });
+}
+
+export const NO_LOOP_WARNING = "Warning: no step of this pipeline runs the agent, so the task ends after the approvals alone, without any work done.";
 
 /** Agent config for one loop: the loop's settings override the agent's. */
 export function agentForLoop(agent: AgentConfig, loopName: string, loop: LoopConfig): AgentConfig {
@@ -278,6 +295,7 @@ export function spawnPipeline(
     // Let the runner attach onTranscript before the first event.
     await Promise.resolve();
     note(`Pipeline started for agent "${agent.name}"`);
+    if (!pipelineRunsAgent(agent.pipeline!.steps)) note(`⚠ ${NO_LOOP_WARNING}`);
     const result = await executePipeline(agent.pipeline!, agent.loops ?? {}, {
       runLoop,
       requestHuman: options.requestHuman,

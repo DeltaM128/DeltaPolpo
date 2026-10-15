@@ -7,7 +7,9 @@ import {
   insertStep,
   moveStep,
   newStep,
+  NO_LOOP_WARNING,
   parsePathKey,
+  pipelineWarnings,
   pathKey,
   removeCase,
   removeStep,
@@ -104,6 +106,18 @@ describe("pipeline editing", () => {
     const twins = validatePipeline({ steps: [{ parallel: [{ human: "ok" }, { human: "ok" }] }] }, {});
     expect(newStep("human", {}, { steps: [{ human: "approval" }, { human: "approval-2" }] })).toEqual({ human: "approval-3" });
     expect(twins.map((p) => p.message)).toEqual(['Another human step is also named "ok".', 'Another human step is also named "ok".']);
+  });
+
+  test("a pipeline with no loop step is saved with a warning: it never runs the agent", () => {
+    expect(pipelineWarnings({ steps: [{ human: "approval" }] })).toEqual([NO_LOOP_WARNING]);
+    expect(pipelineWarnings({ steps: [{ parallel: [{ human: "a" }, { human: "b" }] }] })).toEqual([NO_LOOP_WARNING]);
+    // Not a problem: it saves.
+    expect(validatePipeline({ steps: [{ human: "approval" }] }, {})).toEqual([]);
+
+    expect(pipelineWarnings(support())).toEqual([]);
+    expect(pipelineWarnings({ steps: [{ switch: { cases: [{ when: "x", steps: [{ loop: "triage" }] }] } }, { human: "ok" }] })).toEqual([]);
+    // An empty pipeline is already a problem.
+    expect(pipelineWarnings({ steps: [] })).toEqual([]);
   });
 });
 

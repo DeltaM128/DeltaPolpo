@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Edit an agent from its page:** an Edit button opens a panel with the agent's role, team, manager, model (with "Use project default"), reasoning, turn and parallel-task limits, additional instructions, built-in tools and tool categories, skills, identity (display name, title, company, email, timezone, tone, personality, bio, responsibilities) and advanced settings (allowed folders, email domains, browser profile, Telegram voice replies). Before, the agent page only showed the configuration; it could be changed only in the chat with Polpo, in `agents.json` or through the API.
+- **Warning for a pipeline that never runs the agent:** a pipeline made only of human steps (e.g. a single approval) saves and runs, but its tasks end as done after the approvals, without the agent doing any work. The pipeline editor now shows a warning above the graph and on save, the agent's Pipeline tab is flagged, and the task result says so.
 - `PATCH /agents/:name`: an empty value removes an optional text field (`model`, `role`, `systemPrompt`, `reasoning`, `browserProfile`, identity fields), e.g. `model: ""` makes the agent use the project default again.
 
 ### Fixed
