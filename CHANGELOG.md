@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The mission page refreshed the mission only on the first change of a run: nothing cleared the "missions stale" flag when the missions list was not mounted. Checkpoint events now also update the mission status (paused / active), and an abort refreshes it.
 - The Approvals page went blank (counters back to 0) at every refresh: `useApprovals` showed the loading state on every refetch. It now does so only on the first load.
 - The agents list kept a stale ETag after an agent's configuration changed, so browsers kept showing the old agents. The ETag now depends on the content.
+- On every start the server logged `[checkpoint] approval sync failed`, and a mission paused at a checkpoint before a restart got no approval on the Approvals page: the sync ran before the orchestration engine it reads from was created. It now runs right after.
 
 ## [0.4.9] — 2026-10-14 — Routine
 
