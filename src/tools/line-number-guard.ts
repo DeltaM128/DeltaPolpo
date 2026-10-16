@@ -31,14 +31,18 @@ export function hasCopiedLineNumbers(text: string): boolean {
   const { lines } = contentLines(text);
   if (lines.length < 2) return false;
   let expected: number | undefined;
+  let withText = 0;
   for (const line of lines) {
     const match = LINE_NUMBER.exec(line);
     if (!match) return false;
     const n = Number(match[1]);
     if (expected !== undefined && n !== expected) return false;
     expected = n + 1;
+    if (line.slice(match[0].length).replace(/^\\n$/, "").trim()) withText++;
   }
-  return true;
+  // Lines that are only a number are data (e.g. the numbers 1 to 10, one per line): copied line
+  // numbers sit in front of text on most lines (a bare number is a copied empty line).
+  return withText * 2 >= lines.length;
 }
 
 /** Whether `text` has its line breaks written as literal "\n" (no real line break). */
