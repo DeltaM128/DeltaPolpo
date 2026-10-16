@@ -30,6 +30,14 @@ describe("checks and the task's output folder", () => {
     expect(missing.passed).toBe(false);
   });
 
+  test("a Windows output folder is an absolute path, not one under the working directory", async () => {
+    const asked: string[] = [];
+    const deps = { polpoDir: "C:\\p\\.polpo", fs: { exists: async (path: string) => { asked.push(path); return true; } } } as unknown as AssessmentDeps;
+    const win = { ...context, outputDir: "C:\\p/output/run (2)/01 - t" };
+    await runCheck(deps, { type: "file_exists", paths: ["$POLPO_OUTPUT_DIR/note.md", "D:/data/x.csv", "rel/y.md"] }, "C:\\p", undefined, win as never);
+    expect(asked).toEqual(["C:\\p/output/run (2)/01 - t/note.md", "D:/data/x.csv", "C:\\p/rel/y.md"]);
+  });
+
   test("without a context nothing changes", async () => {
     const { deps, calls } = fakeDeps();
     await runCheck(deps, { type: "test", command: "npm test" }, "/p");
