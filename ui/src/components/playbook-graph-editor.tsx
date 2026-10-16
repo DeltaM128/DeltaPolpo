@@ -20,6 +20,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   AlertTriangle,
+  Bot,
   LayoutGrid,
   ListChecks,
   Loader2,
@@ -27,6 +28,7 @@ import {
   RotateCcw,
   Save,
   ShieldCheck,
+  SquareTerminal,
   Timer,
   Trash2,
   X,
@@ -209,7 +211,7 @@ export function PlaybookGraphEditor({
 
   // ── Toolbar actions ──
 
-  const handleAdd = (kind: GraphNodeKind) => {
+  const handleAdd = (kind: GraphNodeKind | "script") => {
     const { draft: next, ref } = addNode(draft, kind);
     // Drop the new node to the right of the existing graph so it never covers another node,
     // or in the middle of the canvas when the graph is empty.
@@ -281,6 +283,9 @@ export function PlaybookGraphEditor({
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/40 px-3 py-2">
         <Button size="sm" variant="outline" className="h-8 gap-1.5 text-[11px]" onClick={() => handleAdd("task")}>
           <Plus className="h-3.5 w-3.5" /><ListChecks className="h-3.5 w-3.5" /> Task
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-[11px]" onClick={() => handleAdd("script")} title="A task that runs a shell command, no agent">
+          <Plus className="h-3.5 w-3.5" /><SquareTerminal className="h-3.5 w-3.5 text-violet-400" /> Script
         </Button>
         <Button size="sm" variant="outline" className="h-8 gap-1.5 text-[11px]" onClick={() => handleAdd("checkpoint")}>
           <Plus className="h-3.5 w-3.5" /><ShieldCheck className="h-3.5 w-3.5 text-amber-500" /> Checkpoint
@@ -404,7 +409,7 @@ function Inspector({
   const gate = selected.kind === "checkpoint" ? draft.checkpoints[selected.index] : delay;
   if (!task && !gate) return null;
 
-  const title = selected.kind === "task" ? "Task" : selected.kind === "checkpoint" ? "Checkpoint" : "Delay";
+  const title = selected.kind === "task" ? (task?.script ? "Script task" : "Task") : selected.kind === "checkpoint" ? "Checkpoint" : "Delay";
 
   return (
     <aside className="flex h-full w-[min(340px,45%)] shrink-0 flex-col overflow-hidden border-l border-border bg-background">
@@ -424,23 +429,80 @@ function Inspector({
             <Field label="Title">
               <CommitInput className="h-8 text-xs" value={task.title} onCommit={(v) => onTaskChange({ title: v })} />
             </Field>
-            <Field label="Agent">
+            <Field label="Run by">
+              <div className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant={task.script ? "outline" : "secondary"}
+                  className="h-7 flex-1 gap-1 text-[11px]"
+                  onClick={() => task.script && onTaskChange({ script: undefined })}
+                >
+                  <Bot className="h-3.5 w-3.5" /> Agent
+                </Button>
+                <Button
+                  size="sm"
+                  variant={task.script ? "secondary" : "outline"}
+                  className="h-7 flex-1 gap-1 text-[11px]"
+                  onClick={() => !task.script && onTaskChange({ script: { command: "" }, assignTo: undefined })}
+                >
+                  <SquareTerminal className="h-3.5 w-3.5" /> Script
+                </Button>
+              </div>
+            </Field>
+            {task.script ? (
+              <>
+                <Field label="Command">
+                  <CommitTextarea
+                    className="min-h-[120px] text-xs font-mono"
+                    placeholder={'python scripts/convert.py "$POLPO_DEP_1/data.csv" > "$POLPO_OUTPUT_DIR/report.md"'}
+                    value={task.script.command}
+                    onCommit={(v) => onTaskChange({ script: { command: v } })}
+                  />
+                  <span className="text-[10px] leading-snug text-muted-foreground">
+                    Polpo runs it in the project folder with bash (Git Bash, or cmd.exe without it, on Windows), no agent.
+                    Save files in <code>$POLPO_OUTPUT_DIR</code>; <code>$POLPO_DEP_1</code>, <code>$POLPO_DEP_2</code>… are the folders of the
+                    tasks it depends on. Exit code 0 means done; the output is saved in <code>script.log</code>.
+                    A <code>{"{{param}}"}</code> is pasted into the command as it is: use it only with values you trust.
+                  </span>
+                </Field>
+                <Field label="Description (optional)">
+                  <CommitTextarea
+                    className="min-h-[60px] text-xs"
+                    value={task.description ?? ""}
+                    onCommit={(v) => onTaskChange({ description: v || undefined })}
+                  />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="Agent">
+                  <CommitInput
+                    className="h-8 text-xs"
+                    list="playbook-editor-agents"
+                    placeholder="agent name"
+                    value={task.assignTo ?? ""}
+                    onCommit={(v) => onTaskChange({ assignTo: v.trim() || undefined })}
+                  />
+                  <datalist id="playbook-editor-agents">
+                    {agentNames.map((n) => <option key={n} value={n} />)}
+                  </datalist>
+                </Field>
+                <Field label="Description (supports {{params}})">
+                  <CommitTextarea
+                    className="min-h-[140px] text-xs font-mono"
+                    value={task.description ?? ""}
+                    onCommit={(v) => onTaskChange({ description: v })}
+                  />
+                </Field>
+              </>
+            )}
+            <Field label="Timeout (seconds, empty = default)">
               <CommitInput
                 className="h-8 text-xs"
-                list="playbook-editor-agents"
-                placeholder="agent name"
-                value={task.assignTo ?? ""}
-                onCommit={(v) => onTaskChange({ assignTo: v.trim() || undefined })}
-              />
-              <datalist id="playbook-editor-agents">
-                {agentNames.map((n) => <option key={n} value={n} />)}
-              </datalist>
-            </Field>
-            <Field label="Description (supports {{params}})">
-              <CommitTextarea
-                className="min-h-[140px] text-xs font-mono"
-                value={task.description ?? ""}
-                onCommit={(v) => onTaskChange({ description: v })}
+                type="number"
+                min={1}
+                value={task.maxDuration != null ? String(Math.round(task.maxDuration / 1000)) : ""}
+                onCommit={(v) => onTaskChange({ maxDuration: v === "" || Number(v) <= 0 ? undefined : Math.round(Number(v) * 1000) })}
               />
             </Field>
             <Field label="Max retries">

@@ -18,6 +18,7 @@ import { FileRunStore } from "../stores/file-run-store.js";
 import { FileTaskControlStore } from "../stores/file-task-control-store.js";
 import { spawnEngine } from "../adapters/engine.js";
 import { spawnPipeline, hasPipeline } from "../adapters/pipeline.js";
+import { spawnScript } from "../adapters/script.js";
 import { createHumanRelay } from "./pipeline/human-relay.js";
 import type { RunStore, RunRecord } from "./run-store.js";
 import type { LogStore } from "./log-store.js";
@@ -371,9 +372,11 @@ async function main(): Promise<void> {
       resumeMessages: checkpoint?.messages,
       continuation,
     };
-    // Agents with a deterministic pipeline run it step by step (docs/loops.md);
-    // every other agent runs the task as a single engine session.
-    handle = hasPipeline(config.agent)
+    // A script task runs its command (adapters/script.ts); agents with a deterministic pipeline
+    // run it step by step (docs/loops.md); every other agent runs the task as a single engine session.
+    handle = config.script
+      ? spawnScript(config.script, config.task, config.cwd, spawnCtx)
+      : hasPipeline(config.agent)
       ? spawnPipeline(config.agent, config.task, config.cwd, spawnCtx, {
           requestHuman: config.notifySocket
             ? createHumanRelay({

@@ -962,15 +962,22 @@ export function TaskDetailPage() {
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground sm:mt-0.5">
               <CopyableId id={task.id} label="Task ID" />
-              <Link to={`/agents/${task.assignTo}`} className="flex items-center gap-1.5 hover:text-foreground transition-colors">
-                <AgentAvatar avatar={identity?.avatar} name={task.assignTo} size="xs" />
-                {identity?.displayName && (
-                  <span className="font-medium text-foreground/80">{identity.displayName}</span>
-                )}
-                <span className={identity?.displayName ? "text-muted-foreground" : ""}>
-                  {identity?.displayName ? `@${task.assignTo}` : task.assignTo}
+              {task.assignTo === "@script" ? (
+                // a script task: Polpo ran its command, there is no agent page to open
+                <span className="flex items-center gap-1.5 text-violet-400" title="Polpo runs this command itself, no agent">
+                  <Terminal className="h-3.5 w-3.5" /> script
                 </span>
-              </Link>
+              ) : (
+                <Link to={`/agents/${task.assignTo}`} className="flex items-center gap-1.5 hover:text-foreground transition-colors">
+                  <AgentAvatar avatar={identity?.avatar} name={task.assignTo} size="xs" />
+                  {identity?.displayName && (
+                    <span className="font-medium text-foreground/80">{identity.displayName}</span>
+                  )}
+                  <span className={identity?.displayName ? "text-muted-foreground" : ""}>
+                    {identity?.displayName ? `@${task.assignTo}` : task.assignTo}
+                  </span>
+                </Link>
+              )}
               {task.group && (
                 <Link to={`/missions`} className="hidden items-center gap-1 hover:text-foreground transition-colors md:flex">
                   <Target className="h-3 w-3" /> {task.group}

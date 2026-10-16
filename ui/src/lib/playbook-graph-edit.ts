@@ -56,7 +56,7 @@ function gateList(draft: GraphDraft, kind: "checkpoint" | "delay"): (MissionChec
 
 function cloneDraft(draft: GraphDraft): GraphDraft {
   return {
-    tasks: draft.tasks.map((t) => ({ ...t, dependsOn: t.dependsOn ? [...t.dependsOn] : undefined })),
+    tasks: draft.tasks.map((t) => ({ ...t, dependsOn: t.dependsOn ? [...t.dependsOn] : undefined, ...(t.script ? { script: { ...t.script } } : {}) })),
     checkpoints: draft.checkpoints.map((c) => ({ ...c, afterTasks: [...c.afterTasks], blocksTasks: [...c.blocksTasks] })),
     delays: draft.delays.map((d) => ({ ...d, afterTasks: [...d.afterTasks], blocksTasks: [...d.blocksTasks] })),
   };
@@ -178,13 +178,16 @@ function uniqueSlug(base: string, taken: Iterable<string>): string {
   return `${base}-${i}`;
 }
 
-/** Append a node of the given kind with a unique default name. Returns the draft and the new node's ref. */
-export function addNode(draft: GraphDraft, kind: GraphNodeKind): { draft: GraphDraft; ref: GraphNodeRef } {
+/**
+ * Append a node of the given kind with a unique default name. Returns the draft and the new node's ref.
+ * A "script" is a task that runs a shell command instead of an agent (its ref kind is "task").
+ */
+export function addNode(draft: GraphDraft, kind: GraphNodeKind | "script"): { draft: GraphDraft; ref: GraphNodeRef } {
   const next = cloneDraft(draft);
-  if (kind === "task") {
-    const title = uniqueName("New task", next.tasks.map((t) => t.title));
-    next.tasks.push({ title, description: "" });
-    return { draft: next, ref: { kind, index: next.tasks.length - 1 } };
+  if (kind === "task" || kind === "script") {
+    const title = uniqueName(kind === "script" ? "New script" : "New task", next.tasks.map((t) => t.title));
+    next.tasks.push(kind === "script" ? { title, script: { command: "" } } : { title, description: "" });
+    return { draft: next, ref: { kind: "task", index: next.tasks.length - 1 } };
   }
   if (kind === "checkpoint") {
     const name = uniqueSlug("review", next.checkpoints.map((c) => c.name));
@@ -308,7 +311,10 @@ export function missionFromDraft(base: Record<string, unknown>, draft: GraphDraf
 function cleanTask(task: MissionTaskDef): MissionTaskDef {
   const out = { ...task };
   if (out.dependsOn && out.dependsOn.length === 0) delete out.dependsOn;
-  if (!out.assignTo) delete out.assignTo;
+  if (!out.script) delete out.script;
+  // a script task runs its command: no agent, and its description is optional
+  if (!out.assignTo || out.script) delete out.assignTo;
+  if (out.script && !out.description?.trim()) delete out.description;
   return out;
 }
 
@@ -323,6 +329,10 @@ export function isValidDuration(duration: string): boolean {
 export function draftWarnings(draft: GraphDraft): string[] {
   const warnings: string[] = [];
   for (const t of draft.tasks) {
+    if (t.script) {
+      if (!t.script.command.trim()) warnings.push(`Script "${t.title}" has no command.`);
+      continue;
+    }
     if (!t.assignTo) warnings.push(`"${t.title}" has no agent assigned.`);
     if (!t.description?.trim()) warnings.push(`"${t.title}" has no description.`);
   }

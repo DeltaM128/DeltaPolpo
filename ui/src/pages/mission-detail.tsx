@@ -42,6 +42,7 @@ import {
   PlayCircle,
   ShieldCheck,
   FolderOpen,
+  SquareTerminal,
 } from "lucide-react";
 import {
   ReactFlow,
@@ -248,6 +249,18 @@ export function TaskNodeComponent({ data, selected }: NodeProps<Node<TaskNodeDat
         {/* Title */}
         <p className={cn("text-xs font-semibold leading-tight mb-1.5", !expanded && "line-clamp-2")}>{taskDef.title}</p>
 
+        {/* Script task: the command it runs */}
+        {taskDef.script && (
+          expanded || !taskDef.description ? (
+            <pre className={cn(
+              "mb-2 overflow-hidden rounded bg-muted/60 px-1.5 py-1 font-mono text-[9px] leading-snug text-foreground/80 whitespace-pre-wrap break-all",
+              !expanded && "line-clamp-2",
+            )}>
+              {taskDef.script.command.trim() || "(no command)"}
+            </pre>
+          ) : null
+        )}
+
         {/* Description — collapsed: 2-line clamp, expanded: full markdown */}
         {taskDef.description && (
           expanded ? (
@@ -261,7 +274,12 @@ export function TaskNodeComponent({ data, selected }: NodeProps<Node<TaskNodeDat
 
         {/* Compact footer (always visible) */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {taskDef.assignTo && (
+          {taskDef.script ? (
+            <Badge variant="outline" className="text-[8px] px-1 py-0 gap-0.5 text-violet-400" title="Polpo runs this command itself, no agent">
+              <SquareTerminal className="h-2 w-2" />
+              script
+            </Badge>
+          ) : taskDef.assignTo && (
             <Badge variant="outline" className="text-[8px] px-1 py-0 gap-0.5">
               <Bot className="h-2 w-2" />
               {taskDef.assignTo}
@@ -741,13 +759,18 @@ function GraphTaskPreview({ node, onClose }: { node: Node<TaskNodeData>; onClose
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-3 p-3">
+          {taskDef.script && (
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted/60 px-2 py-1.5 font-mono text-[11px] text-foreground/80">{taskDef.script.command}</pre>
+          )}
           {taskDef.description && (
             <div className="prose prose-sm max-w-none break-words text-xs leading-relaxed text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap">
               <Markdown>{taskDef.description}</Markdown>
             </div>
           )}
           <div className="flex flex-wrap gap-1.5">
-            {taskDef.assignTo && <Badge variant="outline" className="gap-1 text-[9px]"><Bot className="h-2.5 w-2.5" />{taskDef.assignTo}</Badge>}
+            {taskDef.script
+              ? <Badge variant="outline" className="gap-1 text-[9px] text-violet-400"><SquareTerminal className="h-2.5 w-2.5" />script</Badge>
+              : taskDef.assignTo && <Badge variant="outline" className="gap-1 text-[9px]"><Bot className="h-2.5 w-2.5" />{taskDef.assignTo}</Badge>}
             {(taskDef.dependsOn?.length ?? 0) > 0 && <Badge variant="secondary" className="gap-1 text-[9px]"><GitBranch className="h-2.5 w-2.5" />{taskDef.dependsOn!.length} dependencies</Badge>}
             {(taskDef.expectations?.length ?? 0) > 0 && <Badge variant="secondary" className="gap-1 text-[9px]"><Wrench className="h-2.5 w-2.5" />{taskDef.expectations!.length} checks</Badge>}
           </div>
@@ -904,7 +927,12 @@ export function TaskStepCard({
 
             {/* Metadata row — always visible */}
             <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground">
-              {taskDef.assignTo && (
+              {taskDef.script ? (
+                <span className="flex min-w-0 items-center gap-1 text-violet-400" title={taskDef.script.command}>
+                  <SquareTerminal className="h-3 w-3 shrink-0" />
+                  <span className="truncate font-mono">{taskDef.script.command.trim().split(/\r?\n/)[0]}</span>
+                </span>
+              ) : taskDef.assignTo && (
                 <span className="flex items-center gap-1">
                   <Bot className="h-3 w-3" />
                   {taskDef.assignTo}

@@ -747,6 +747,14 @@ export interface RunnerConfig {
   whatsappDbPath?: string;
   /** WhatsApp Baileys profile path (for whatsapp_send — creates a temporary connection). */
   whatsappProfilePath?: string;
+  /** Script task (script-task.ts): the runner runs this command instead of an agent. */
+  script?: {
+    command: string;
+    /** POLPO_OUTPUT_DIR, POLPO_TASK, POLPO_MISSION, POLPO_DEP_<n> (folders of the tasks it depends on). */
+    env: Record<string, string>;
+    /** When the task times out (epoch ms): the command is stopped then, before the run is killed. */
+    deadline?: number;
+  };
 }
 
 // === Polpo File Config (.polpo/polpo.json — persistent project configuration) ===
