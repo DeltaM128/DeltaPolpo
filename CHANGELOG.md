@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
 
 ### Fixed
+- A run stopped at the turn limit is not a model error: stopping the agent at `maxTurns` ends its last call with an abort error, so the run ends as a normal one (its expectations decide) and its output says `[Stopped at the turn limit (N turns)]`.
 - Task runs ignored the custom providers of `polpo.json` (local model servers such as Ollama or LM Studio, gateways): their models worked in chat, but tasks failed with "Model not found". The task runner now registers them, with their secrets from the vault.
 - Playbooks could not be run from the dashboard: the run dialog existed but no button opened it. Playbook cards and the playbook page now have a Run button.
 - Playbooks with checkpoints, delays or quality gates could be saved but not run: the blocked tasks lacked the `dependsOn` the mission schema requires, and the run answered a plain-text 500 ("Unexpected token 'I'… is not valid JSON" in the dashboard). The dependencies are now added when the playbook runs, and a run that cannot start answers a JSON 400 and leaves no mission behind.
