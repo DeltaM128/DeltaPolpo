@@ -29,6 +29,11 @@ describe("copied line numbers", () => {
     // ...or with no separator at all (seen with qwen3:4b too)
     expect(hasCopiedLineNumbers("1Il cane dorme.\n2Un gattone.\n3Alla fine.\n4\n")).toBe(true);
     expect(withoutLineNumbers("1Il cane.\n2Un gatto.\n")).toBe("Il cane.\nUn gatto.\n");
+    // A file of numbers, one per line, is data (seen: "1..10" refused in a group 2 test)
+    expect(hasCopiedLineNumbers("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")).toBe(false);
+    expect(hasCopiedLineNumbers("1\\n2\\n3\\n")).toBe(false);
+    // ...while copied numbers in front of text with a few empty lines still count
+    expect(hasCopiedLineNumbers("1\tTitolo\n2\n3\tTesto\n4\tAltro\n")).toBe(true);
     // Numbers that are data are not line numbers: not consecutive, or not on every line
     expect(hasCopiedLineNumbers("2024 rapporto annuale\n2026 piano\n")).toBe(false);
     expect(hasCopiedLineNumbers("3kg farina\n5kg zucchero\n")).toBe(false);
