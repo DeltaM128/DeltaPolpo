@@ -15,7 +15,7 @@ import type {
   EffectiveSandbox, ExecOptions, ExecResult, StorageMountSpec, Workspace, WorkspaceEntry, WorkspaceFileStat,
 } from "@polpo-ai/core/sandbox";
 import { startNetworkProxy, type NetworkDenial, type NetworkProxy } from "./net-proxy.js";
-import { localShell } from "./local-shell.js";
+import { killProcessTree, localShell } from "./local-shell.js";
 
 /** Output kept in memory per stream; the bash tool offloads anything big to a file anyway. */
 const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
@@ -110,7 +110,11 @@ export function run(argv: string[], opts: ExecOptions & { env: Record<string, st
     };
     child.stdout.on("data", collect("out"));
     child.stderr.on("data", collect("err"));
-    const kill = () => { try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); } };
+    // the whole tree: the shell and what it started
+    const kill = () => {
+      if (process.platform === "win32" && child.pid && killProcessTree(child.pid)) return;
+      try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+    };
     const timer = opts.timeoutMs ? setTimeout(() => { timedOut = true; kill(); }, opts.timeoutMs) : undefined;
     opts.signal?.addEventListener("abort", kill, { once: true });
     if (opts.stdin !== undefined) child.stdin.end(opts.stdin); else child.stdin.end();
