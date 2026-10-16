@@ -7,6 +7,7 @@ import { sanitizeExpectations, parseMissionDocument, type MissionDocumentParsed 
 import type { CheckpointStore, CheckpointState } from "./checkpoint-store.js";
 import type { DelayStore, DelayState } from "./delay-store.js";
 import type { NotificationRouterPort } from "./notification-router-port.js";
+import { parseISO8601Duration } from "./iso-duration.js";
 
 // ── In-memory fallback stores (no Node.js deps) ─────────────────────────
 
@@ -83,6 +84,8 @@ export const MISSION_EDIT: unique symbol = Symbol.for("polpo.missionEdit") as ne
 export class MissionExecutor {
   /** Finished runs, keyed by run (see runKey): their mission status is already final. */
   private cleanedGroups = new Set<string>();
+  /** Delays whose duration could not be read, already reported (once each). */
+  private unreadableDelays = new Set<string>();
   /** Quality gates parsed from mission documents, keyed by mission group name */
   private gatesByGroup = new Map<string, MissionQualityGate[]>();
   /** Persistent checkpoint store — survives server restarts */
@@ -384,8 +387,19 @@ export class MissionExecutor {
 
       // Delay triggered — activate timer if not already active
       if (!this.delayState.active[dlKey]) {
+        // A duration that cannot be read (missions saved before durations were validated) must
+        // not stop the supervisor, which would hold every mission: report it and do not wait.
+        let durationMs: number;
+        try {
+          durationMs = parseISO8601Duration(dl.duration);
+        } catch (err) {
+          if (!this.unreadableDelays.has(dlKey)) {
+            this.unreadableDelays.add(dlKey);
+            this.ctx.emitter.emit("log", { level: "warn", message: `[delay] "${dl.name}" of "${group}" ignored: ${err instanceof Error ? err.message : String(err)}` });
+          }
+          continue;
+        }
         const startedAt = new Date().toISOString();
-        const durationMs = parseISO8601Duration(dl.duration);
         const expiresAt = new Date(Date.now() + durationMs).toISOString();
         this.delayState.active[dlKey] = { delay: dl, startedAt, expiresAt };
         await this.delayStore.save(this.delayState);
@@ -1271,23 +1285,3 @@ export class MissionExecutor {
   }
 }
 
-// ── ISO 8601 Duration Parser ──────────────────────────────────────────
-// Supports: P[nY][nM][nW][nD][T[nH][nM][nS]]
-// Examples: PT2H (2 hours), PT30M (30 min), P1D (1 day), P1DT6H (1 day 6 hours)
-
-const ISO_DURATION_RE = /^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/;
-
-function parseISO8601Duration(duration: string): number {
-  const m = ISO_DURATION_RE.exec(duration);
-  if (!m) throw new Error(`Invalid ISO 8601 duration: "${duration}"`);
-  const years   = parseInt(m[1] || "0", 10);
-  const months  = parseInt(m[2] || "0", 10);
-  const weeks   = parseInt(m[3] || "0", 10);
-  const days    = parseInt(m[4] || "0", 10);
-  const hours   = parseInt(m[5] || "0", 10);
-  const minutes = parseInt(m[6] || "0", 10);
-  const seconds = parseFloat(m[7] || "0");
-  // Approximate: 1 year ≈ 365.25 days, 1 month ≈ 30.44 days
-  const totalDays = years * 365.25 + months * 30.44 + weeks * 7 + days;
-  return ((totalDays * 24 + hours) * 60 + minutes) * 60000 + seconds * 1000;
-}
