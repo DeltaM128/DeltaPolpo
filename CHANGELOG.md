@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Checks can find what the task saved:** `test` and `script` expectations run with `POLPO_OUTPUT_DIR` set to the task's output folder, and `file_exists` paths may start with `$POLPO_OUTPUT_DIR/`. The folder of a run (`output/<mission run>/<NN> - <task>/`) is not known when the expectation is written.
 - **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
 
 ### Changed
