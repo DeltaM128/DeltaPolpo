@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PATCH /agents/:name`: an empty value removes an optional text field (`model`, `role`, `systemPrompt`, `reasoning`, `browserProfile`, identity fields), e.g. `model: ""` makes the agent use the project default again.
 
 ### Fixed
+- **A run stopped at the turn limit counted as a model error** (since the change above): stopping the agent at `maxTurns` ends its last call with an abort error. It is no longer a failure by itself: the run ends as before, its expectations decide, and the output says `[Stopped at the turn limit (N turns)]`.
 - **The bash tool failed for every command on Windows** ("uv_spawn '/bin/bash' ENOENT"): the local workspace always ran `/bin/bash -c <command>`. On Windows it now uses Git for Windows' bash (from the usual install folders, or next to `git` on PATH; never `System32\bash.exe`, the WSL launcher), else `cmd.exe`; `POLPO_SHELL` picks another bash-compatible shell. Commands no longer open a console window. Linux and macOS are unchanged.
 - **A context-full error from Ollama or llama.cpp was not recognized** ("request (16384 tokens) exceeds the available context size"), so the task failed instead of compacting its conversation and retrying once, as it does for the other providers' overflow errors.
 - **A file of numbers, one per line, was refused as copied line numbers** (e.g. the numbers 1 to 10): the check now needs text after the numbers on most lines.

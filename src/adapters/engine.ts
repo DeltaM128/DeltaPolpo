@@ -676,6 +676,8 @@ export function spawnEngine(agentConfig: AgentConfig, task: Task, cwd: string, c
   // Track turns for maxTurns enforcement
   let turnCount = 0;
   const maxTurns = agentConfig.maxTurns ?? 150;
+  // Set when the engine stops the run at maxTurns: that abort is not a model error (runResult)
+  let turnLimitReached = false;
 
   // Subscribe to agent events for activity tracking + transcript
   agent.subscribe(async (event: AgentEvent) => {
@@ -757,6 +759,7 @@ export function spawnEngine(agentConfig: AgentConfig, task: Task, cwd: string, c
         turnCount++;
         await handle.onCheckpoint?.(structuredClone(agent.state.messages), turnCount);
         if (turnCount >= maxTurns) {
+          turnLimitReached = true;
           agent.abort();
         }
         break;
@@ -848,7 +851,7 @@ export function spawnEngine(agentConfig: AgentConfig, task: Task, cwd: string, c
         await agent.continue();
       }
 
-      const result = runResult(agent.state.messages);
+      const result = runResult(agent.state.messages, turnLimitReached ? { turnLimit: maxTurns } : {});
       if (result.exitCode !== 0) handle.onTranscript?.({ type: "error", message: result.stderr });
       alive = false;
       return { ...result, duration: Date.now() - start };
@@ -882,10 +885,15 @@ export function spawnEngine(agentConfig: AgentConfig, task: Task, cwd: string, c
  * error (HTTP 500, the model crashed while loading, a timeout…) failed: the agent ends it with
  * that error instead of throwing, and it used to count as a success with no output, so the task
  * was "done" without any work. Otherwise the output is the last text the agent wrote.
+ *
+ * `turnLimit`: the engine stopped the run at the turn limit. Aborting the agent ends its last call
+ * with an error too, but that is not a model error: the run ends as before, its expectations
+ * decide whether the work is done, and the output says the limit was reached.
  */
-export function runResult(messages: readonly unknown[]): { exitCode: number; stdout: string; stderr: string } {
+export function runResult(messages: readonly unknown[], opts: { turnLimit?: number } = {}): { exitCode: number; stdout: string; stderr: string } {
   const last = messages[messages.length - 1] as { role?: string; stopReason?: string; errorMessage?: string } | undefined;
-  if (last?.role === "assistant" && last.stopReason === "error") {
+  const failed = last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "aborted");
+  if (failed && !opts.turnLimit) {
     return { exitCode: 1, stdout: "", stderr: `Model error: ${last.errorMessage || "the model returned an error"}` };
   }
   let resultText = "";
@@ -895,6 +903,7 @@ export function runResult(messages: readonly unknown[]): { exitCode: number; std
     const text = msg.content.find((block: { type?: string }) => block?.type === "text") as { text?: string } | undefined;
     if (text?.text) resultText = text.text;
   }
+  if (failed) resultText = `${resultText ? `${resultText}\n\n` : ""}[Stopped at the turn limit (${opts.turnLimit} turns)]`;
   return { exitCode: 0, stdout: resultText, stderr: "" };
 }
 
