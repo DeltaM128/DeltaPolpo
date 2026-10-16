@@ -2,7 +2,8 @@ import { describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chooseLocalShell } from "../sandbox/local-shell.js";
+import { chooseLocalShell, localShell } from "../sandbox/local-shell.js";
+import { NodeShell } from "../adapters/node-shell.js";
 import { LocalWorkspace } from "../sandbox/workspaces.js";
 import { bashSafeEnv } from "../tools/safe-env.js";
 
@@ -39,5 +40,14 @@ describe("local shell", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  // Checks of expectations run through NodeShell: a check written for the agents' bash must work
+  // on Windows too (it ran in cmd.exe, where `test "$(…)"` always fails).
+  test.skipIf(localShell().name === "cmd.exe")("checks run in the same shell as the agents' commands", async () => {
+    const shell = new NodeShell();
+    const ok = await shell.execute('test "$(echo 3)" = 3 && echo "$POLPO_OUTPUT_DIR"', { env: { POLPO_OUTPUT_DIR: "out/01 - a" } });
+    expect(ok).toMatchObject({ exitCode: 0, stdout: "out/01 - a" });
+    expect((await shell.execute("exit 4")).exitCode).toBe(4);
   });
 });

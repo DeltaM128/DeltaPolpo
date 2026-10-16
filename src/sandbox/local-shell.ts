@@ -4,6 +4,7 @@
  * command): Git for Windows' bash is used when found, else cmd.exe.
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
@@ -41,6 +42,15 @@ export function chooseLocalShell(
   const found = candidates.find((p) => exists(p));
   if (found) return bash(found);
   return { argv: (command) => [env.ComSpec || "cmd.exe", "/d", "/s", "/c", command], name: "cmd.exe" };
+}
+
+/**
+ * Windows: end a process and everything it started. There are no process groups there, and
+ * Git's bash runs each command as a child process: killing bash alone leaves it running.
+ */
+export function killProcessTree(pid: number): boolean {
+  const r = spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+  return !r.error && r.status === 0;
 }
 
 let cached: ShellChoice | undefined;
