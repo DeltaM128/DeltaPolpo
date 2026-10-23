@@ -112,6 +112,7 @@ describe("agent prompt", () => {
     const prompt = buildSystemPrompt({ name: "dev" } as any, cwd, undefined, join(cwd, "output", "report (2)", "02 - Scrivi report"));
     expect(prompt).toContain("Your task output directory is: output/report (2)/02 - Scrivi report");
     expect(prompt).toContain("write output/report (2)/02 - Scrivi report/report.md, not report.md");
+    expect(prompt).toContain("The output directories of the other tasks (for example the tasks this one depends on) are read-only");
   });
 });
 
