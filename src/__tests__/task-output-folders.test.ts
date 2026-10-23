@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskRunner, safeFolderName, taskOutputPath, missionOutputPath, taskPosition, bareFileNames } from "@polpo-ai/core";
 import { TypedEmitter } from "../core/events.js";
-import { buildSystemPrompt } from "../adapters/engine.js";
+import { buildSystemPrompt, buildPrompt, grantsTool } from "../adapters/engine.js";
 import { listOutputFiles } from "../core/output-files.js";
 
 describe("output folder names", () => {
@@ -113,6 +113,29 @@ describe("agent prompt", () => {
     expect(prompt).toContain("Your task output directory is: output/report (2)/02 - Scrivi report");
     expect(prompt).toContain("write output/report (2)/02 - Scrivi report/report.md, not report.md");
     expect(prompt).toContain("The output directories of the other tasks (for example the tasks this one depends on) are read-only");
+  });
+
+  test("names only the tools the agent gets: an agent limited to the file tools is not told it has bash", () => {
+    const cwd = join(tmpdir(), "proj");
+    const files = ["read", "write", "edit", "glob", "grep", "ls", "register_outcome"];
+    const limited = buildSystemPrompt({ name: "dev", allowedTools: files } as any, cwd);
+    for (const t of files) expect(limited).toContain(`- \`${t}\``);
+    for (const t of ["bash", "http_fetch", "http_download", "ink_search", "ink_add"]) expect(limited).not.toContain(`- \`${t}\``);
+    expect(limited).toContain("- `vault_list`"); // every agent gets the vault tools
+    expect(limited).toContain("no shell (`bash`)");
+    expect(limited).not.toContain("use `bash` as a fallback");
+    expect(limited).toContain("All file tools (read, write, edit, glob, grep, ls) resolve paths");
+
+    const task = { title: "t", description: "d", expectations: [] } as any;
+    expect(buildPrompt(task, grantsTool({ name: "dev", allowedTools: files } as any, "bash"))).not.toContain("Bash tool rules");
+
+    // no list: the core set, bash included; a wildcard grants what it matches
+    const all = buildSystemPrompt({ name: "dev" } as any, cwd);
+    for (const t of ["bash", "http_fetch", "ink_search"]) expect(all).toContain(`- \`${t}\``);
+    expect(all).toContain("use `bash` as a fallback");
+    expect(buildPrompt(task)).toContain("Bash tool rules");
+    expect(grantsTool({ name: "dev", allowedTools: ["read", "ink_*"] } as any, "ink_add")).toBe(true);
+    expect(grantsTool({ name: "dev", allowedTools: ["READ"] } as any, "read")).toBe(true);
   });
 });
 
