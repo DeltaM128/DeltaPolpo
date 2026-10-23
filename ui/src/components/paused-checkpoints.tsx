@@ -94,7 +94,7 @@ export function PausedCheckpoints({ missionId, missionName }: { missionId?: stri
               </p>
               <p className="text-xs text-muted-foreground">
                 {cp.checkpoint.message ? `${cp.checkpoint.message} · ` : ""}
-                Done: {cp.checkpoint.afterTasks.join(", ") || "—"} · Waiting: {cp.checkpoint.blocksTasks.join(", ") || "—"}
+                After: {cp.checkpoint.afterTasks.join(", ") || "—"} · Waiting: {cp.checkpoint.blocksTasks.join(", ") || "—"}
                 {" · "}reached {formatDistanceToNow(new Date(cp.reachedAt), { addSuffix: true })}
               </p>
             </div>

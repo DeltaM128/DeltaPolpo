@@ -203,7 +203,7 @@ function RejectDialog({
 // ── Approval card ──
 
 /** Payload of the approval that stands for a mission paused at a checkpoint. */
-interface CheckpointPayload { kind: "checkpoint"; message?: string; afterTasks?: string[]; blocksTasks?: string[] }
+interface CheckpointPayload { kind: "checkpoint"; message?: string; afterTasks?: string[]; blocksTasks?: string[]; failedTasks?: string[] }
 
 function isCheckpointPayload(payload: unknown): payload is CheckpointPayload {
   return typeof payload === "object" && payload !== null && (payload as { kind?: unknown }).kind === "checkpoint";
@@ -303,8 +303,14 @@ function ApprovalCard({
             {checkpoint && (
               <p className="text-xs text-muted-foreground mt-2">
                 {checkpoint.message ? `${checkpoint.message} · ` : ""}
-                Done: {checkpoint.afterTasks?.join(", ") || "—"} · Approve to start: {checkpoint.blocksTasks?.join(", ") || "—"}
+                After: {checkpoint.afterTasks?.join(", ") || "—"} · Approve to start: {checkpoint.blocksTasks?.join(", ") || "—"}
                 {isPending && " · Reject aborts the mission"}
+              </p>
+            )}
+            {/* The checkpoint is reached also when tasks before it failed */}
+            {checkpoint?.failedTasks && checkpoint.failedTasks.length > 0 && (
+              <p className="text-xs font-medium text-red-400 mt-1">
+                Failed in this run: {checkpoint.failedTasks.join(", ")}. Approving resumes the mission; it does not redo them.
               </p>
             )}
 
