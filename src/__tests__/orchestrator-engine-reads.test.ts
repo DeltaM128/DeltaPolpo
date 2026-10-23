@@ -65,6 +65,8 @@ function setup(opts: { evented?: boolean } = {}) {
     cleanupCompletedGroups: vi.fn(async (tasks: Task[]) => { cleaned.push(structuredClone(tasks)); }),
     getQualityGates: () => [], getCheckpoints: () => [], getDelays: () => [],
     getActiveCheckpoints: () => [], getActiveDelays: () => [],
+    // a paused mission's checkpoints are restored from its data (none here)
+    restoreCheckpointDefinitions: async () => [],
   };
   const taskRunner = {
     collectResults: vi.fn(async () => { for (const step of duringTick) await step(); }),
