@@ -77,7 +77,7 @@ export const ARTIFACT_TYPE_LABEL: Record<ArtifactType, string> = {
   html: "Page",
   svg: "Drawing",
   mermaid: "Diagram",
-  view: "View",
+  view: "Legacy view",
 };
 
 /** What a person sees as the artifact's kind: the html kind (Dashboard, Design…) or the type. */

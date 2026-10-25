@@ -27,7 +27,6 @@ const FILTERS: { value: "all" | ArtifactType; label: string }[] = [
   { value: "doc", label: "Documents" },
   { value: "mermaid", label: "Diagrams" },
   { value: "svg", label: "Drawings" },
-  { value: "view", label: "Views" },
 ];
 
 function ArtifactIcon({ artifact, className = "h-4 w-4" }: { artifact: Pick<ArtifactSummary, "type" | "kind">; className?: string }) {
@@ -45,6 +44,10 @@ function when(iso: string): string {
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+function LegacyBadge() {
+  return <Badge variant="outline" className="border-amber-500/40 text-[10px] text-amber-700 dark:text-amber-300">Legacy</Badge>;
+}
+
 const author = (by: string) => (by.startsWith("person:") ? by.slice("person:".length) : by === "polpo" ? "Polpo" : by);
 
 export function ArtifactsPage() {
@@ -55,6 +58,8 @@ export function ArtifactsPage() {
 function ArtifactGallery() {
   const [params, setParams] = useSearchParams();
   const filter = (params.get("type") as ArtifactType | null) ?? "all";
+  // the former views have no tab of their own: they show in All (marked Legacy), or with ?type=view
+  const tab = FILTERS.some((f) => f.value === filter) ? filter : "all";
   const [q, setQ] = useState("");
   const [items, setItems] = useState<ArtifactSummary[] | null>(null);
   const { events } = useEvents(["artifact:changed", "data-view:changed"], 1);
@@ -71,7 +76,7 @@ function ArtifactGallery() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Tabs value={filter} onValueChange={(v) => setParams(v === "all" ? {} : { type: v })}>
+        <Tabs value={tab} onValueChange={(v) => setParams(v === "all" ? {} : { type: v })}>
           <TabsList>{FILTERS.map((f) => <TabsTrigger key={f.value} value={f.value}>{f.label}</TabsTrigger>)}</TabsList>
         </Tabs>
         <div className="relative ml-auto w-full max-w-xs">
@@ -98,11 +103,12 @@ function ArtifactGallery() {
                   <p className="truncate font-medium text-sm">{a.title}</p>
                   <p className="text-[11px] text-muted-foreground">{artifactLabel(a)} · {author(a.createdBy)}</p>
                 </div>
+                {a.type === "view" && <LegacyBadge />}
                 {a.pinned && <Badge variant="secondary" className="text-[10px]">Pinned</Badge>}
               </div>
               {a.description && <p className="line-clamp-2 text-xs text-muted-foreground">{a.description}</p>}
               <p className="mt-auto text-[11px] text-muted-foreground">
-                {a.type === "view" ? "Former view · " : `v${a.version} · `}{when(a.updatedAt)}
+                {a.type === "view" ? "" : `v${a.version} · `}{when(a.updatedAt)}
                 {a.sources?.length ? ` · ${a.sources.length} source${a.sources.length === 1 ? "" : "s"}` : ""}
               </p>
             </Link>
@@ -177,9 +183,9 @@ function ArtifactDetail({ id }: { id: string }) {
         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => navigate("/artifacts")} aria-label="Back to artifacts"><ArrowLeft className="h-4 w-4" /></Button>
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary"><ArtifactIcon artifact={artifact} className="h-3.5 w-3.5" /></span>
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">{artifact.title}</h1>
+          <h1 className="flex items-center gap-2 truncate text-sm font-semibold">{artifact.title}{legacyView && <LegacyBadge />}</h1>
           <p className="text-[11px] text-muted-foreground">
-            {artifactLabel(artifact)} · by {author(artifact.createdBy)}{legacyView ? " · former view" : ` · v${artifact.version}`} · {when(artifact.updatedAt)}
+            {artifactLabel(artifact)} · by {author(artifact.createdBy)}{legacyView ? "" : ` · v${artifact.version}`} · {when(artifact.updatedAt)}
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-1">
@@ -209,6 +215,11 @@ function ArtifactDetail({ id }: { id: string }) {
           {!legacyView && <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => void remove()} aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></Button>}
         </div>
       </div>
+      {legacyView && (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          A legacy view, from before artifacts. It still works, but it can no longer be edited here: ask Polpo or an agent to remake it as an html dashboard.
+        </p>
+      )}
       {(artifact.description || artifact.sources?.length || shownVersion) && (
         <p className="text-xs text-muted-foreground">
           {shownVersion ? `Showing v${shownVersion.version}${shownVersion.author ? ` by ${author(shownVersion.author)}` : ""}. ` : ""}
