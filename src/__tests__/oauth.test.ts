@@ -4,15 +4,17 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  authorizationServerMetadata, consentPage, OAuthServer, pkceMatches, protectedResourceMetadata, redirectUriMatches,
+  authorizationServerMetadata, consentPage, isPrivateAddress, OAuthServer, pkceMatches, protectedResourceMetadata, redirectUriMatches,
 } from "../server/oauth.js";
 
 const dirs: string[] = [];
 afterEach(() => { dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })); });
+// host names resolve to a public address, except the ones made to look internal
+const resolve = async (hostname: string) => [hostname.endsWith(".internal") ? "100.101.102.103" : "160.79.104.10"];
 function server(fetchImpl?: typeof fetch) {
   const dir = mkdtempSync(join(tmpdir(), "polpo-oauth-"));
   dirs.push(dir);
-  return { oauth: new OAuthServer(dir, fetchImpl), dir };
+  return { oauth: new OAuthServer(dir, fetchImpl, resolve), dir };
 }
 const RESOURCE = "https://polpo.example.com/mcp";
 function pkce() {
@@ -95,6 +97,31 @@ describe("OAuth for the MCP connector", () => {
     expect(client).toMatchObject({ client_name: "Claude Code", source: "cimd" });
     await expect(oauth.client("https://claude.ai/other")).rejects.toThrow(/client_id does not match/);
     await expect(oauth.client("http://plain.example.com/meta")).rejects.toThrow(/Unknown client/);
+  });
+
+  it("never fetches a metadata document from an address inside the network", async () => {
+    const fetchImpl = vi.fn(async () => new Response("{}")) as unknown as typeof fetch;
+    const { oauth } = server(fetchImpl);
+    for (const id of ["https://127.0.0.1/meta", "https://[::1]/meta", "https://192.168.1.4/meta", "https://box.internal/meta"]) {
+      await expect(oauth.client(id)).rejects.toThrow(/Could not read/);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(["10.0.0.1", "172.20.1.1", "100.64.0.1", "169.254.169.254", "::ffff:127.0.0.1", "fd7a:115c:a1e0::1", "fe80::1"].every(isPrivateAddress)).toBe(true);
+    expect(["160.79.104.10", "8.8.8.8", "2606:4700::1111"].some(isPrivateAddress)).toBe(false);
+  });
+
+  it("keeps open registration bounded, without dropping clients that hold tokens", () => {
+    const { oauth } = server();
+    const first = oauth.register({ redirect_uris: ["https://a.example.com/cb"] });
+    const { verifier, challenge } = pkce();
+    const req = { client_id: first.client_id, redirect_uri: "https://a.example.com/cb", code_challenge: challenge };
+    oauth.exchange({ grant_type: "authorization_code", code: oauth.issueCode(req, RESOURCE, "x"), redirect_uri: req.redirect_uri, code_verifier: verifier });
+    const second = oauth.register({ redirect_uris: ["https://b.example.com/cb"] });
+    for (let i = 0; i < 205; i++) oauth.register({ redirect_uris: ["https://spam.example.com/cb"] });
+    return Promise.all([
+      expect(oauth.client(first.client_id)).resolves.toMatchObject({ client_id: first.client_id }),
+      expect(oauth.client(second.client_id)).rejects.toThrow(/Unknown client/),
+    ]);
   });
 
   it("the consent page names the app and where it goes back, and warns for local apps", () => {

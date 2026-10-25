@@ -577,16 +577,25 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
   app.route("/v1/chat/completions", completionApp);
 
   // ── OAuth for the MCP connector (Claude web/Desktop/mobile, ChatGPT…) ──
-  // The public origin as the client sees it (a reverse proxy or Tailscale in front): POLPO_PUBLIC_URL,
-  // else the forwarded host and protocol, else the request URL.
+  // The public origin as the client sees it (a reverse proxy or Tailscale in front): the forwarded host
+  // and protocol, else the request URL. POLPO_PUBLIC_URL (which may carry a path, when the proxy mounts
+  // Polpo under one) wins for requests through its host, or that name no other host.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
   const publicOrigin = (c: any): string => {
-    if (process.env.POLPO_PUBLIC_URL) return process.env.POLPO_PUBLIC_URL.replace(/\/+$/, "");
     const url = new URL(c.req.url);
-    const host = (c.req.header("x-forwarded-host") as string | undefined)?.split(",")[0]?.trim() || c.req.header("host") || url.host;
+    const forwardedHost = (c.req.header("x-forwarded-host") as string | undefined)?.split(",")[0]?.trim();
     const proto = (c.req.header("x-forwarded-proto") as string | undefined)?.split(",")[0]?.trim() || url.protocol.replace(":", "");
+    const host = (forwardedHost || c.req.header("host") || url.host).replace(proto === "https" ? /:443$/ : /:80$/, "");
+    const configured = process.env.POLPO_PUBLIC_URL?.replace(/\/+$/, "");
+    if (configured && (!forwardedHost || new URL(configured).host === host)) return configured;
     return `${proto}://${host}`;
   };
+  // Keys that open the MCP connector: the server's API keys, and POLPO_MCP_KEY (comma-separated) for an
+  // instance that exposes only its connector, with no API key on the dashboard and REST API.
+  const mcpKeys = (): string[] => [
+    ...(opts?.apiKeys ?? []),
+    ...(process.env.POLPO_MCP_KEY ?? "").split(",").map((k) => k.trim()).filter(Boolean),
+  ];
   let oauth: { dir: string; server: OAuthServer } | undefined;
   const oauthServer = (): OAuthServer => {
     const dir = activePolpoDir();
@@ -597,10 +606,10 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
   const oauthFail = (c: any, err: unknown) => err instanceof OAuthError
     ? c.json({ error: err.code, error_description: err.message }, 400)
     : c.json({ error: "server_error", error_description: err instanceof Error ? err.message : String(err) }, 500);
-  // How the person on the consent page may allow a client: signed in to the dashboard, the API key, or open (no auth at all)
+  // How the person on the consent page may allow a client: signed in to the dashboard, an API or MCP key, or open (no auth at all)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
   const consentIdentity = (c: any): { method: "session" | "api-key" | "open"; email?: string } => {
-    const keys = opts?.apiKeys ?? [];
+    const keys = mcpKeys();
     const instanceAuth = isInstanceAuthEnabled();
     const session = instanceAuth && opts?.workDir ? validateSession(getPolpoDir(opts.workDir), getCookie(c, AUTH_COOKIE_NAME)) : null;
     if (session) return { method: "session", email: session.email };
@@ -663,7 +672,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     let subject = who.email ?? "local";
     if (who.method === "api-key") {
       const key = typeof form.api_key === "string" ? form.api_key : "";
-      const ok = hasValidApiKey(new Request("http://x/", { headers: { "x-api-key": key } }), opts?.apiKeys ?? []);
+      const ok = hasValidApiKey(new Request("http://x/", { headers: { "x-api-key": key } }), mcpKeys());
       if (!ok) return c.html(consentPage({ client, redirectUri: params.redirect_uri!, params: { ...params, csrf: consentCsrf(c) }, method: "api-key", error: "That API key is not valid." }), 401);
       subject = "api-key";
     }
@@ -688,11 +697,11 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
 
   // ── MCP: Polpo as a connector (Claude Code, Codex, Claude, ChatGPT…) ──
   // Streamable HTTP, stateless. The tools call this server's REST API in process, so they follow
-  // the same rules; the caller is authenticated here: an API key (Bearer or X-API-Key) or a
-  // dashboard session, or nothing when the server has no auth at all (localhost-only).
+  // the same rules; the caller is authenticated here: an API or MCP key (Bearer or X-API-Key), an OAuth
+  // token or a dashboard session, or nothing when the server has no auth and no key at all (localhost-only).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
   const mcpAuthorized = (c: any): boolean => {
-    const keys = opts?.apiKeys ?? [];
+    const keys = mcpKeys();
     const instanceAuth = isInstanceAuthEnabled();
     if (!instanceAuth && keys.length === 0) return true;
     if (hasValidApiKey(c.req.raw, keys)) return true;

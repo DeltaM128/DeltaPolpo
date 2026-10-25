@@ -9,17 +9,23 @@
  * - authorization code with PKCE S256 only; `iss` in the response (RFC 9207); loopback redirects match
  *   on any port (native clients such as Claude Code);
  * - opaque access tokens (1 hour) and rotating refresh tokens (30 days), stored hashed;
- * - consent: a person signed in to the dashboard, or who enters the server's API key, allows the client.
+ * - consent: a person signed in to the dashboard, or who enters the server's API key (or MCP key), allows the client;
+ * - the endpoints may be public: open registration is capped, and metadata documents are only fetched
+ *   from public addresses.
  *
  * State lives in `.polpo/oauth.json` (clients and tokens); authorization codes in memory (10 minutes).
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 export const ACCESS_TOKEN_TTL_S = 3600;
 export const REFRESH_TOKEN_TTL_S = 30 * 24 * 3600;
 const CODE_TTL_MS = 10 * 60_000;
+/** Registered (DCR) clients kept; past it the oldest without live tokens go, so open registration cannot fill the disk. */
+const MAX_DCR_CLIENTS = 200;
 export const OAUTH_SCOPE = "polpo";
 
 export interface OAuthClient {
@@ -81,6 +87,21 @@ export function redirectUriMatches(registered: string, requested: string): boole
   }
 }
 
+/** Is an address private, loopback, link-local or shared (CGNAT, the tailnet)? */
+export function isPrivateAddress(address: string): boolean {
+  const ip = address.toLowerCase().replace(/^::ffff:/, "");
+  if (isIP(ip) === 4) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
+  }
+  return ip === "::" || ip === "::1" || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip);
+}
+
+/** The addresses a host name resolves to. */
+export type ResolveHost = (hostname: string) => Promise<string[]>;
+const resolveHost: ResolveHost = async (hostname) => (await lookup(hostname, { all: true })).map((a) => a.address);
+
 /** S256 PKCE check. */
 export function pkceMatches(verifier: string, challenge: string): boolean {
   if (!/^[A-Za-z0-9\-._~]{43,128}$/.test(verifier)) return false;
@@ -91,7 +112,7 @@ export class OAuthServer {
   private codes = new Map<string, PendingCode>();
   private readonly file: string;
 
-  constructor(polpoDir: string, private readonly fetchImpl: typeof fetch = fetch) {
+  constructor(polpoDir: string, private readonly fetchImpl: typeof fetch = fetch, private readonly resolve: ResolveHost = resolveHost) {
     this.file = join(polpoDir, "oauth.json");
   }
 
@@ -134,6 +155,13 @@ export class OAuthServer {
     };
     const state = this.read();
     state.clients.push(client);
+    const inUse = new Set(state.tokens.map((t) => t.client_id));
+    let excess = state.clients.filter((c) => c.source === "dcr").length - MAX_DCR_CLIENTS;
+    state.clients = state.clients.filter((c) => {
+      if (excess <= 0 || c.source !== "dcr" || c === client || inUse.has(c.client_id)) return true;
+      excess--;
+      return false;
+    });
     this.write(state);
     return client;
   }
@@ -143,13 +171,17 @@ export class OAuthServer {
     const known = this.read().clients.find((c) => c.client_id === clientId);
     if (known) return known;
     if (!clientId.startsWith("https://")) throw new OAuthError("invalid_client", "Unknown client");
+    // the endpoint is public: never fetch an address inside the network this server runs in
+    const hostname = new URL(clientId).hostname.replace(/^\[|\]$/g, "");
+    const addresses = isIP(hostname) ? [hostname] : await this.resolve(hostname).catch(() => []);
+    if (addresses.length === 0 || addresses.some(isPrivateAddress)) throw new OAuthError("invalid_client", "Could not read the client's metadata document");
     const res = await this.fetchImpl(clientId, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5000), redirect: "error" })
       .catch(() => null);
     if (!res || !res.ok) throw new OAuthError("invalid_client", "Could not read the client's metadata document");
     const text = await res.text();
-    if (text.length > 20_000) throw new OAuthError("invalid_client", "The client's metadata document is too large");
+    if (text.length > 20_000) throw new OAuthError("invalid_client", "Could not read the client's metadata document");
     let doc: { client_id?: unknown; client_name?: unknown; redirect_uris?: unknown };
-    try { doc = JSON.parse(text); } catch { throw new OAuthError("invalid_client", "The client's metadata document is not JSON"); }
+    try { doc = JSON.parse(text); } catch { throw new OAuthError("invalid_client", "Could not read the client's metadata document"); }
     if (doc.client_id !== clientId) throw new OAuthError("invalid_client", "The metadata document's client_id does not match");
     const uris = Array.isArray(doc.redirect_uris) ? doc.redirect_uris.filter((u): u is string => typeof u === "string") : [];
     if (uris.length === 0) throw new OAuthError("invalid_client", "The metadata document lists no redirect_uris");
@@ -308,14 +340,14 @@ h1{font-size:18px;margin:0 0 8px}.muted{color:#71717a;font-size:13px}.warn{color
 input[type=password]{width:100%;box-sizing:border-box;padding:8px;border:1px solid #d4d4d8;border-radius:8px;margin:8px 0}
 button{padding:8px 16px;border-radius:8px;border:0;background:#18181b;color:#fff;font-weight:600;cursor:pointer}
 @media(prefers-color-scheme:dark){button{background:#e4e4e7;color:#18181b}}.row{display:flex;gap:8px;margin-top:16px}.secondary{background:transparent;color:inherit;border:1px solid #d4d4d8}</style></head>
-<body><form class="card" method="post" action="/oauth/authorize">${hidden}
+<body><form class="card" method="post" action="authorize">${hidden}
 <h1>Connect ${esc(input.client.client_name ?? "an app")} to Polpo</h1>
 <p>It will be able to use this Polpo instance on your behalf: ask Polpo, talk to agents, read and change tasks, missions, artifacts and data.</p>
 <p class="muted">You will be sent back to <b>${esc(host)}</b>.</p>
 ${loopback ? `<p class="warn">This is an app on your computer (a local address). Allow it only if you just started the connection yourself.</p>` : ""}
 ${input.error ? `<p class="err">${esc(input.error)}</p>` : ""}
 ${input.method === "session" ? `<p class="muted">Signed in as ${esc(input.email ?? "")}.</p>` : ""}
-${input.method === "api-key" ? `<label class="muted">Enter this server's API key to allow it${input.loginUrl ? `, or <a href="${esc(input.loginUrl)}">sign in to the dashboard</a> first` : ""}:</label><input type="password" name="api_key" autocomplete="off" required>` : ""}
+${input.method === "api-key" ? `<label class="muted">Enter this server's API key or MCP key to allow it${input.loginUrl ? `, or <a href="${esc(input.loginUrl)}">sign in to the dashboard</a> first` : ""}:</label><input type="password" name="api_key" autocomplete="off" required>` : ""}
 <div class="row"><button type="submit" name="decision" value="allow">Allow</button><button class="secondary" type="submit" name="decision" value="deny" formnovalidate>Cancel</button></div>
 </form></body></html>`;
 }

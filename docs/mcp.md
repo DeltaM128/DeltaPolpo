@@ -3,7 +3,7 @@
 Every Polpo server is also an [MCP](https://modelcontextprotocol.io) server. Claude Code, Codex, Claude Desktop, Cursor and any other MCP client can use your instance: ask Polpo to do things, chat with agents, follow tasks and missions, read data, make artifacts, approve requests, and call any REST operation.
 
 - **Endpoint:** `https://<your-polpo-host>/mcp` (Streamable HTTP, stateless).
-- **Authentication:** your Polpo API key, as `Authorization: Bearer <key>` (or `X-API-Key: <key>`), or OAuth (a sign-in) for Claude and ChatGPT connectors. A server started without any API key or login accepts local calls without one, since it listens only on localhost.
+- **Authentication:** your Polpo API key, as `Authorization: Bearer <key>` (or `X-API-Key: <key>`), or the MCP key (`POLPO_MCP_KEY`, below), or OAuth (a sign-in) for Claude and ChatGPT connectors. A server started without any API key, MCP key or login accepts calls without one: never make such a server reachable from the internet.
 - **Local process instead of a URL:** `polpo mcp --url <server> --api-key <key>` runs the same tools over stdio and forwards them to the server.
 
 ## Tools
@@ -93,10 +93,35 @@ On the consent page you allow the app:
 
 Polpo then issues an access token (1 hour) and a refresh token (30 days, rotated at every use). Tokens are stored hashed in `.polpo/oauth.json`; delete a client's tokens there, or call `/oauth/revoke`, to disconnect it.
 
-**Reachability:** Claude's and ChatGPT's servers must reach your Polpo over public HTTPS. An instance behind Tailscale serve is only reachable on your tailnet: use Tailscale Funnel or a reverse proxy with a public hostname. If the public URL differs from what the server sees, set `POLPO_PUBLIC_URL` (e.g. `https://polpo.example.com`), or make the proxy send `X-Forwarded-Host` and `X-Forwarded-Proto`. Claude Code is a local app, so it can sign in with OAuth over the tailnet too.
+**Reachability:** Claude's and ChatGPT's servers must reach your Polpo over public HTTPS. An instance behind Tailscale serve is only reachable on your tailnet: use Tailscale Funnel or a reverse proxy with a public hostname (see below). Polpo takes the public URL from the `X-Forwarded-Host` and `X-Forwarded-Proto` headers; set `POLPO_PUBLIC_URL` when the proxy does not send them or mounts Polpo under a path. Claude Code is a local app, so it can sign in with OAuth over the tailnet too.
+
+## Publishing only the connector
+
+An instance can make its connector public and keep the dashboard and REST API private. The public paths are `/mcp`, `/oauth/…` and the discovery documents under `/.well-known/`:
+
+1. **Set an MCP key.** `POLPO_MCP_KEY=<a long random secret>` in the server's environment. It opens `/mcp` and the consent page, and it does not put an API key on the dashboard. A server with no key at all must never be public.
+2. **Publish only those paths.** With Tailscale Funnel, for an instance on port 3000 mounted under `/shoplix`:
+
+   ```bash
+   tailscale funnel --bg --set-path /shoplix/mcp http://127.0.0.1:3000/mcp
+   tailscale funnel --bg --set-path /shoplix/oauth http://127.0.0.1:3000/oauth
+   tailscale funnel --bg --set-path /shoplix/.well-known/oauth-protected-resource http://127.0.0.1:3000/.well-known/oauth-protected-resource
+   tailscale funnel --bg --set-path /shoplix/.well-known/oauth-authorization-server http://127.0.0.1:3000/.well-known/oauth-authorization-server
+   tailscale funnel --bg --set-path /.well-known/oauth-authorization-server/shoplix http://127.0.0.1:3000/.well-known/oauth-authorization-server
+   tailscale funnel --bg --set-path /.well-known/oauth-protected-resource/shoplix/mcp http://127.0.0.1:3000/.well-known/oauth-protected-resource/mcp
+   ```
+
+   The last two answer the discovery URLs that clients build at the root of the host for an issuer with a path (RFC 8414 and RFC 9728).
+3. **Tell Polpo its public URL.** `POLPO_PUBLIC_URL=https://<host>.ts.net/shoplix`. It applies to requests that come through that host; the same instance on the tailnet, on its own port, keeps its own URL.
+
+The connector URL is then `https://<host>.ts.net/shoplix/mcp`. On the consent page, enter the MCP key.
+
+Because these endpoints are public:
+- open client registration is capped (200 clients; clients that hold tokens are kept);
+- client metadata documents are fetched only from public addresses, never from the server's own network.
 
 ## Security
 
-- The API key gives the same access as the REST API: keep it secret, and never put it in a URL.
+- The API key and the MCP key give the same access as the REST API: keep them secret, and never put them in a URL.
 - Every tool goes through the server's own API, with the same checks as the dashboard.
 - Serve Polpo over HTTPS when you expose it beyond localhost (for example with Tailscale or a reverse proxy).

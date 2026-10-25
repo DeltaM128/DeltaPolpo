@@ -58,6 +58,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       "- **chat_with_agent**: parla con un agente.",
       "- Task, missioni, artefatti, dati e approvazioni, più l'accesso a tutte le operazioni dell'API.",
       "",
+      "Puoi rendere pubblico solo il connettore, con una **chiave MCP** dedicata (`POLPO_MCP_KEY`), e tenere privati la dashboard e le API.",
+      "",
       "La guida con la configurazione per ogni client è in `docs/mcp.md`.",
     ].join("\n"),
   },
