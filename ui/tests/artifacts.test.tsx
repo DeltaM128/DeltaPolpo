@@ -5,8 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 vi.mock("@polpo-ai/react", () => ({ useEvents: () => ({ events: [] }) }));
 
 import { ARTIFACT_CHANNEL, ARTIFACT_CSP, artifactFrameDoc } from "../src/lib/artifact-frame-doc";
-import { artifactDownload, artifactLabel } from "../src/lib/artifacts-api";
-import { artifactIdOf } from "../src/components/artifacts/artifact-chat-card";
+import { artifactDownload, artifactIdOf, artifactLabel } from "../src/lib/artifacts-api";
 import { ArtifactFrame } from "../src/components/artifacts/artifact-frame";
 
 test("the frame document puts the policy and the bridge before anything of the page", () => {
@@ -58,8 +57,9 @@ test("the frame answers the page's data calls, only from its own window", async 
   const iframe = container.querySelector("iframe")!;
   expect(iframe.getAttribute("sandbox")).toBe("allow-scripts allow-popups allow-modals");
   const win = iframe.contentWindow!;
-  const posted: unknown[] = [];
-  vi.spyOn(win, "postMessage").mockImplementation(((m: unknown) => { posted.push(m); }) as never);
+  type Posted = { channel: string; type: string; id?: number; ok?: boolean; data?: unknown; error?: string };
+  const posted: Posted[] = [];
+  vi.spyOn(win, "postMessage").mockImplementation(((m: Posted) => { posted.push(m); }) as never);
 
   const send = async (data: unknown, source: unknown = win) => {
     await act(async () => {
@@ -75,25 +75,34 @@ test("the frame answers the page's data calls, only from its own window", async 
 
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/artifacts/art_1/data");
-  const results = posted.filter((m: any) => m.type === "result");
+  const results = posted.filter((m) => m.type === "result");
   expect(results).toEqual(expect.arrayContaining([
     { channel: ARTIFACT_CHANNEL, type: "result", id: 1, ok: true, data: [{ id: "sales", name: "Sales" }] },
     { channel: ARTIFACT_CHANNEL, type: "result", id: 2, ok: false, error: "Access denied to Sales" },
     { channel: ARTIFACT_CHANNEL, type: "result", id: 3, ok: false, error: "Unknown method mutate" },
   ]));
-  expect(results.find((m: any) => m.id === 4)).toBeUndefined();
+  expect(results.find((m) => m.id === 4)).toBeUndefined();
 });
 
 test("the bridge script itself: calls go to the parent, results and refreshes come back", async () => {
   const { bridgeScript } = await import("../src/lib/artifact-frame-doc");
   const listeners: Array<(e: { source: unknown; data: unknown }) => void> = [];
-  const sent: any[] = [];
+  const sent: unknown[] = [];
   const parent = { postMessage: (m: unknown) => sent.push(m) };
   const attrs: Record<string, string> = {};
-  const fakeWindow: any = { addEventListener: (_: string, fn: any) => listeners.push(fn) };
+  type Polpo = {
+    theme: string;
+    query(q: unknown): Promise<unknown>;
+    sql(id: string, sql: string): Promise<unknown>;
+    onRefresh(fn: () => void): void;
+    onTheme(fn: (theme: string) => void): void;
+  };
+  const fakeWindow: { polpo?: Polpo; addEventListener: (type: string, fn: (e: { source: unknown; data: unknown }) => void) => void } = {
+    addEventListener: (_type, fn) => { listeners.push(fn); },
+  };
   const fakeDocument = { readyState: "complete", documentElement: { setAttribute: (k: string, v: string) => { attrs[k] = v; } }, addEventListener: () => {} };
   new Function("window", "parent", "document", bridgeScript("light"))(fakeWindow, parent, fakeDocument);
-  const polpo = fakeWindow.polpo;
+  const polpo = fakeWindow.polpo!;
   expect(polpo.theme).toBe("light");
   expect(attrs["data-theme"]).toBe("light");
 

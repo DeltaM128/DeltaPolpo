@@ -10,11 +10,6 @@ import { Button } from "@/components/ui/button";
 import { sidebarActions } from "@/hooks/chat-context";
 import { artifactLabel, artifactsApi, type ArtifactSummary } from "@/lib/artifacts-api";
 
-/** The artifact id in a tool result ("Created artifact art_… …"). */
-export function artifactIdOf(result: string | undefined): string | undefined {
-  return result ? /\b(art_[\w-]+)/.exec(result)?.[1] : undefined;
-}
-
 export function ArtifactChatCard({ artifactId, updated }: { artifactId: string; updated?: boolean }) {
   const navigate = useNavigate();
   const [artifact, setArtifact] = useState<Pick<ArtifactSummary, "title" | "type" | "kind" | "version"> | null>(null);

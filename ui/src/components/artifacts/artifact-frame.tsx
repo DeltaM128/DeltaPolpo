@@ -3,7 +3,7 @@
  * answering its `polpo` bridge: data calls go to the server with the rights of the artifact's author.
  * It is told to reload its data every refreshSeconds and when a data source changes, and gets the theme.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useEvents } from "@polpo-ai/react";
 import { useTheme } from "@/hooks/use-theme";
 import { ARTIFACT_CHANNEL, artifactFrameDoc } from "@/lib/artifact-frame-doc";
@@ -21,10 +21,10 @@ export function ArtifactFrame({ artifactId, html, refreshSeconds, refreshKey = 0
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const { resolved } = useTheme();
-  const theme = resolved === "dark" ? "dark" : "light";
+  const theme: "light" | "dark" = resolved === "dark" ? "dark" : "light";
   // the document is built once per content: theme changes are sent, not reloaded
-  const themeAtLoad = useRef(theme);
-  const srcDoc = useMemo(() => artifactFrameDoc(html, themeAtLoad.current), [html]);
+  const [themeAtLoad] = useState(theme);
+  const srcDoc = useMemo(() => artifactFrameDoc(html, themeAtLoad), [html, themeAtLoad]);
   const { events } = useEvents(["data-source:changed"], 1);
 
   const post = (message: Record<string, unknown>) =>

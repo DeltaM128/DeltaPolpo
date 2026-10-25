@@ -97,3 +97,8 @@ export function artifactDownload(a: Pick<Artifact, "title" | "type">): { filenam
     default: return { filename: `${base}.json`, mime: "application/json" };
   }
 }
+
+/** The artifact id in a tool result ("Created artifact art_… …"). */
+export function artifactIdOf(result: string | undefined): string | undefined {
+  return result ? /\b(art_[\w-]+)/.exec(result)?.[1] : undefined;
+}
