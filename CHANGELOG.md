@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-25 — Artifacts
+
+### Added
+- **Artifacts** replace Views: one concept for what agents and people make to look at and keep.
+  - **Types:**
+    - `doc` (Markdown);
+    - `html`, one self-contained page with a kind: dashboard, design, app, report, page;
+    - `svg` (a drawing) and `mermaid` (a diagram);
+    - `view`, the former data views, still shown and working.
+  - **Data in html artifacts:** the page runs isolated, in a sandbox without same-origin and with a strict CSP: no network except a few CDNs for libraries. It reads the instance's data sources through a `polpo` bridge with the **rights of its author**: an agent's artifact sees only the sources and fields that agent is granted. The bridge offers:
+    - `polpo.sources()`, `polpo.describe(id)`, `polpo.query({...})` and `polpo.sql(id, …)` (read-only);
+    - `polpo.onRefresh(fn)`, called every `refreshSeconds` and when a data source changes;
+    - `polpo.theme` / `polpo.onTheme`.
+  - **Versions:** every change keeps the previous content with its author and note, and any version can be restored.
+  - **Tools:** `artifact_create`, `artifact_update` (whole content, or find/replace edits), `artifact_get` (also earlier versions), `artifact_list`, `artifact_delete`.
+    - Polpo has all of them; agents get them with `artifact_*` in allowedTools (a new "Artifacts" category in the Tools tab).
+    - Agents change only their own artifacts.
+    - `navigate_to` gains `artifacts` / `artifact`.
+  - **API:** `GET/POST /artifacts`, `GET/PATCH/DELETE /artifacts/:id`, `POST /artifacts/:id/restore/:version`, `POST /artifacts/:id/data` (the bridge). The event is `artifact:changed`. Storage is the `artifacts` table (SQLite/Postgres migrations) or `.polpo/artifacts/` in file mode.
+  - **UI:**
+    - an **Artifacts** section (replacing Views in every menu) with a gallery by type and search;
+    - a viewer with live content, versions and restore, source, data reload, full screen and download;
+    - in the chat, a card for each artifact made or changed, which opens it next to the conversation.
+
+### Changed
+- Polpo's prompt now says when to make an artifact (documents, dashboards on real data, designs, diagrams) and keeps `render_widget` for small throwaway visuals in the chat. The old prompts contradicted each other on views vs widgets.
+- `data_create_view` / `data_update_view` are deprecated in favor of html dashboards. `/views` redirects to the artifacts of type view.
+
+### Fixed
+- A data view shown in the dashboard queried its sources as an administrator, so an agent's view could show data that agent is not granted. As an artifact, a view's data bridge uses its author's rights.
+
 ## [0.4.10] — 2026-10-15 — Fixes from DeltaPolpo
 
 Most of these were found and fixed by @DeltaM128 in the DeltaPolpo fork (#127; #133–#137, #144, #145). Thanks!

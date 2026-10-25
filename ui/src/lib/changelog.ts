@@ -27,6 +27,25 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-25-artifacts",
+    date: "2026-10-25",
+    kind: "new",
+    title: "Artefatti: documenti, dashboard e design",
+    summary: "Chiedi una dashboard sui tuoi dati, un documento o un design: gli agenti li creano come artefatti, sempre a portata di mano.",
+    body: [
+      "Al posto delle **Views** c'è la sezione **Artifacts**, con tutto quello che gli agenti (e tu) create per guardarlo e tenerlo:",
+      "",
+      "- **Dashboard** in HTML sui tuoi dati veri, che si aggiornano da sole.",
+      "- **Documenti** (Markdown), **design** e piccole **app**, **diagrammi** e **disegni**.",
+      "- **Versioni**: ogni modifica tiene la precedente, e puoi tornare indietro.",
+      "- In chat, una scheda per ogni artefatto creato: si apre accanto alla conversazione.",
+      "",
+      "Le pagine girano isolate e leggono i dati con i permessi di chi le ha create. Le vecchie Views sono ancora lì, tra gli artefatti.",
+    ].join("\n"),
+    highlight: true,
+    cta: { label: "Apri gli artefatti", to: "/artifacts" },
+  },
+  {
     id: "2026-10-15-deltapolpo-fixes",
     date: "2026-10-15",
     kind: "fixed",
