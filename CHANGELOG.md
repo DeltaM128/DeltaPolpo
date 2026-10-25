@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - a viewer with live content, versions and restore, source, data reload, full screen and download;
     - in the chat, a card for each artifact made or changed, which opens it next to the conversation.
 
+- **Polpo as an MCP connector:** every server is also an MCP server at `/mcp` (Streamable HTTP, stateless), so Claude Code, Codex, Claude Desktop, Cursor and other MCP clients can use the instance.
+  - **Tools:** 17 tools for what people do (`ask_polpo` delegates anything to Polpo; `chat_with_agent`; tasks, missions, artifacts, data, approvals) plus `list_operations` / `call_operation`, which reach every REST operation of the server (more than 300). There is not one tool per endpoint, to keep the model's context small. Read-only and destructive tools are annotated.
+  - **Authentication:** the API key as `Authorization: Bearer` or `X-API-Key`. An unauthenticated call gets a `401` with the OAuth protected-resource pointer.
+  - **Same rules:** the tools call the server's own REST API in process.
+  - **stdio:** `polpo mcp --url <server> --api-key <key>` runs the same tools over stdio for clients that start a process.
+  - **Setup guide:** `docs/mcp.md`.
+- The API key middleware also accepts `Authorization: Bearer <key>`, not only `X-API-Key`.
+
 ### Changed
 - Polpo's prompt now says when to make an artifact (documents, dashboards on real data, designs, diagrams) and keeps `render_widget` for small throwaway visuals in the chat. The old prompts contradicted each other on views vs widgets.
 - `data_create_view` / `data_update_view` are deprecated in favor of html dashboards. `/views` redirects to the artifacts of type view.

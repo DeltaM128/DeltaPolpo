@@ -13,7 +13,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { errorMiddleware } from "./middleware/error.js";
 import { instanceAuthMiddleware } from "./middleware/instance-auth.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
-import { isInstanceAuthEnabled } from "./auth/instance-auth.js";
+import { AUTH_COOKIE_NAME, isInstanceAuthEnabled, validateSession } from "./auth/instance-auth.js";
 // Shared routes from @polpo-ai/server (edge-compatible, single source of truth)
 import {
   healthRoutes,
@@ -38,8 +38,14 @@ import {
   createTurnScheduler,
   sessionLeases,
   internalCallHeaders,
+  trustedApiCallHeaders,
+  isTrustedApiCall,
+  TRUSTED_API_CALL_HEADER,
   CHAT_ORIGIN_HEADER,
 } from "@polpo-ai/server";
+import { getCookie } from "hono/cookie";
+import { handleMcpRequest } from "./mcp.js";
+import { hasValidApiKey } from "./middleware/instance-auth.js";
 import { reactionHint } from "../notifications/telegram-reactions.js";
 // Node.js-only routes (stay in src/server/routes/)
 import { brandingConfigRoutes, publicConfigRoutes } from "./routes/config.js";
@@ -568,6 +574,47 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
   app.use("/v1/chat/completions", (c, next) => currentEventOrigin() ? next() : withEventOrigin({ source: "api" }, () => next()));
   app.route("/v1/chat/completions", completionApp);
 
+  // ── MCP: Polpo as a connector (Claude Code, Codex, Claude, ChatGPT…) ──
+  // Streamable HTTP, stateless. The tools call this server's REST API in process, so they follow
+  // the same rules; the caller is authenticated here: an API key (Bearer or X-API-Key) or a
+  // dashboard session, or nothing when the server has no auth at all (localhost-only).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
+  const mcpAuthorized = (c: any): boolean => {
+    const keys = opts?.apiKeys ?? [];
+    const instanceAuth = isInstanceAuthEnabled();
+    if (!instanceAuth && keys.length === 0) return true;
+    if (hasValidApiKey(c.req.raw, keys)) return true;
+    return instanceAuth && !!opts?.workDir && !!validateSession(getPolpoDir(opts.workDir), getCookie(c, AUTH_COOKIE_NAME));
+  };
+  app.all("/mcp", async (c) => {
+    if (!mcpAuthorized(c)) {
+      const origin = new URL(c.req.url).origin;
+      c.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
+      return c.json({ error: "Authentication required: send Authorization: Bearer <your Polpo API key>" }, 401);
+    }
+    if (!orchestrator?.isInitialized) return c.json({ error: "Polpo is not initialized. Complete setup first." }, 503);
+    return withEventOrigin({ source: "api", by: "mcp" }, () => handleMcpRequest(c.req.raw, {
+      version: POLPO_PACKAGE_VERSION,
+      routes: () => app.routes,
+      api: async (method, path, body, headers) => {
+        const res = await app.request(path, {
+          method,
+          headers: {
+            ...(body !== undefined ? { "content-type": "application/json" } : {}),
+            ...trustedApiCallHeaders(),
+            ...(opts?.apiKeys?.[0] ? { authorization: `Bearer ${opts.apiKeys[0]}` } : {}),
+            ...headers,
+          },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        });
+        const raw = await res.text();
+        let parsed: unknown = raw;
+        try { parsed = JSON.parse(raw); } catch { /* not JSON */ }
+        return { status: res.status, body: parsed, headers: res.headers };
+      },
+    }));
+  });
+
   // ── Authenticated routes (require initialized orchestrator) ───────────
 
   const authed = new OpenAPIHono();
@@ -1057,7 +1104,9 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     data: activeDataRegistry(),
     author: (c) => {
       const email = c.get("polpoUserEmail" as never) as string | undefined;
-      return email ? `person:${email}` : "person:dashboard";
+      if (email) return `person:${email}`;
+      // made through the MCP connector (the server calls the API for an authenticated client)
+      return isTrustedApiCall(c.req.header(TRUSTED_API_CALL_HEADER)) ? "person:mcp" : "person:dashboard";
     },
     emit: (payload) => orchestrator.emit("artifact:changed", payload),
   })));

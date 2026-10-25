@@ -46,6 +46,22 @@ export const CHANGELOG: ChangelogEntry[] = [
     cta: { label: "Apri gli artefatti", to: "/artifacts" },
   },
   {
+    id: "2026-10-25-mcp-connector",
+    date: "2026-10-25",
+    kind: "new",
+    title: "Polpo come connettore MCP",
+    summary: "Usa Polpo da Claude Code, Codex, Claude Desktop o Cursor: chiedi a Polpo, parla con gli agenti, segui task e dati.",
+    body: [
+      "Ogni server Polpo è anche un **server MCP** su `/mcp`: lo colleghi a Claude Code, Codex, Claude Desktop, Cursor e agli altri client MCP con la tua chiave API.",
+      "",
+      "- **ask_polpo**: chiedi qualsiasi cosa a Polpo, come in chat.",
+      "- **chat_with_agent**: parla con un agente.",
+      "- Task, missioni, artefatti, dati e approvazioni, più l'accesso a tutte le operazioni dell'API.",
+      "",
+      "La guida con la configurazione per ogni client è in `docs/mcp.md`.",
+    ].join("\n"),
+  },
+  {
     id: "2026-10-15-deltapolpo-fixes",
     date: "2026-10-15",
     kind: "fixed",
