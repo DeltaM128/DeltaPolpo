@@ -1,7 +1,7 @@
 /**
  * Polpo as an MCP server: Claude Code, Codex, Claude, ChatGPT and any MCP client use the instance
  * through a small set of tools designed for what people do (ask Polpo, chat with an agent, tasks,
- * missions, artifacts, data, approvals) plus two that reach every REST operation (list_operations,
+ * missions, artifacts, data, approvals, files) plus two that reach every REST operation (list_operations,
  * call_operation), instead of one tool per endpoint, which would cost tens of thousands of tokens of
  * definitions and make models choose worse.
  *
@@ -17,10 +17,12 @@ export interface ApiResponse {
   /** Parsed JSON, or the text when the body is not JSON. */
   body: unknown;
   headers: Headers;
+  /** The raw body, for files. */
+  bytes?: Uint8Array;
 }
 
 export interface McpDeps {
-  /** A call to the instance's own HTTP API (a path from the server root, e.g. /api/v1/tasks), in process. */
+  /** A call to the instance's own HTTP API (a path from the server root, e.g. /api/v1/tasks), in process; a FormData body goes as multipart, anything else as JSON. */
   api: (method: string, path: string, body?: unknown, headers?: Record<string, string>) => Promise<ApiResponse>;
   version: string;
   /** Every route the server has registered (method, path with :params): the ones the OpenAPI document does not describe are reachable too. */
@@ -29,6 +31,8 @@ export interface McpDeps {
 
 /** Longest tool result returned to the model; the rest is cut with a note. */
 export const MAX_RESULT_CHARS = 40_000;
+/** Largest image or PDF returned inline by read_file. */
+export const MAX_INLINE_FILE_BYTES = 5 * 1024 * 1024;
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const fail = (t: string) => ({ content: [{ type: "text" as const, text: t }], isError: true });
@@ -85,6 +89,24 @@ async function chatTurn(deps: McpDeps, message: string, agent: string | undefine
   };
 }
 
+/** A size for people: 12 KB, 3.4 MB. */
+function formatBytes(n: number | undefined): string {
+  if (n === undefined) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** The text of a file, or null when it is binary (NUL bytes, or not UTF-8). */
+function decodeText(bytes: Uint8Array): string | null {
+  if (bytes.subarray(0, 8192).includes(0)) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 interface Operation { method: string; path: string; summary: string; tags: string[] }
 
 /** The REST operations, from the instance's OpenAPI document (paths relative to /api/v1). */
@@ -132,7 +154,7 @@ export function createPolpoMcpServer(deps: McpDeps): McpServer {
   const server = new McpServer(
     { name: "polpo", title: "Polpo", version: deps.version },
     {
-      instructions: "Polpo orchestrates a team of AI agents (tasks, missions, artifacts, data, approvals). "
+      instructions: "Polpo orchestrates a team of AI agents (tasks, missions, artifacts, data, approvals, files). "
         + "For anything open-ended, ask_polpo delegates to Polpo itself, which can do everything the instance can. "
         + "Use the specific tools for quick reads and actions, and list_operations / call_operation for any other REST endpoint.",
     },
@@ -303,6 +325,122 @@ export function createPolpoMcpServer(deps: McpDeps): McpServer {
     if (decision === "reject" && !note?.trim()) return fail("Rejecting needs a note with the feedback.");
     return send(deps, "POST", `/approvals/${encodeURIComponent(id)}/${decision}`,
       decision === "approve" ? { resolvedBy: "mcp", ...(note ? { note } : {}) } : { resolvedBy: "mcp", feedback: note });
+  });
+
+  // ── Files: the instance's workspace, .polpo and volumes, as in the dashboard's Files page ──
+
+  server.registerTool("list_files", {
+    title: "List files",
+    description: "List a folder of the instance (the agents' workspace, .polpo, volumes). Without path: the roots. "
+      + "Paths are relative to the workspace (e.g. reports/2026, .polpo/output).",
+    inputSchema: { path: z.string().optional().describe("Folder; omit for the roots") },
+    annotations: readOnly,
+  }, async ({ path }) => {
+    if (!path) {
+      const r = unwrap(await deps.api("GET", "/api/v1/files/roots"));
+      if (!r.ok) return fail(r.error);
+      const roots = ((r.data as { roots?: Array<{ name: string; path: string; description?: string; totalFiles?: number; readOnly?: boolean }> })?.roots) ?? [];
+      return text(roots.map((x) => `- ${x.path}  (${x.name}${x.description ? `: ${x.description}` : ""}${x.totalFiles !== undefined ? `, ${x.totalFiles} files` : ""}${x.readOnly ? ", read-only" : ""})`).join("\n") || "No roots.");
+    }
+    const r = unwrap(await deps.api("GET", `/api/v1/files/list?path=${encodeURIComponent(path)}`));
+    if (!r.ok) return fail(r.error);
+    const data = r.data as { path: string; entries: Array<{ name: string; type: string; size?: number; modifiedAt?: string }> };
+    const lines = data.entries.map((e) => e.type === "directory" ? `${e.name}/` : `${e.name}  ${formatBytes(e.size)}${e.modifiedAt ? `  ${e.modifiedAt.slice(0, 16).replace("T", " ")}` : ""}`);
+    return text(clip(`${data.path}/\n${lines.join("\n") || "(empty)"}`));
+  });
+
+  server.registerTool("search_files", {
+    title: "Search files",
+    description: "Find files and folders whose name or path contains the words, under a folder (default: the workspace).",
+    inputSchema: { q: z.string().min(1), root: z.string().optional(), limit: z.number().int().min(1).max(500).optional() },
+    annotations: readOnly,
+  }, async ({ q, root, limit }) => {
+    const params = new URLSearchParams({ q, ...(root ? { root } : {}), limit: String(limit ?? 100) });
+    const r = unwrap(await deps.api("GET", `/api/v1/files/search?${params}`));
+    if (!r.ok) return fail(r.error);
+    const results = (r.data as { files?: Array<{ path: string; type: string }> })?.files ?? [];
+    return text(clip(results.map((x) => `${x.path}${x.type === "directory" ? "/" : ""}`).join("\n") || "Nothing found."));
+  });
+
+  server.registerTool("read_file", {
+    title: "Read a file",
+    description: "Read a file of the instance: text (with a line range for long files), images and PDFs as they are; "
+      + "other binary files are described.",
+    inputSchema: {
+      path: z.string().min(1),
+      from_line: z.number().int().min(1).optional().describe("First line, for long text files"),
+      lines: z.number().int().min(1).max(5000).optional().describe("How many lines (default 2000)"),
+    },
+    annotations: readOnly,
+  }, async ({ path, from_line, lines }) => {
+    const res = await deps.api("GET", `/api/v1/files/read?path=${encodeURIComponent(path)}`);
+    if (res.status >= 400) return fail(unwrap(res).ok ? `HTTP ${res.status}` : (unwrap(res) as { error: string }).error);
+    const bytes = res.bytes ?? new TextEncoder().encode(typeof res.body === "string" ? res.body : JSON.stringify(res.body));
+    const mime = (res.headers.get("content-type") ?? "application/octet-stream").split(";")[0]!.trim();
+    if ((mime.startsWith("image/") && mime !== "image/svg+xml") || mime === "application/pdf") {
+      if (bytes.byteLength > MAX_INLINE_FILE_BYTES) return text(`${path}: ${mime}, ${formatBytes(bytes.byteLength)}: too large to return here (limit ${formatBytes(MAX_INLINE_FILE_BYTES)}).`);
+      const data = Buffer.from(bytes).toString("base64");
+      return mime === "application/pdf"
+        ? { content: [{ type: "resource" as const, resource: { uri: `polpo-file:///${path.replace(/^\/+/, "")}`, mimeType: mime, blob: data } }] }
+        : { content: [{ type: "image" as const, data, mimeType: mime }] };
+    }
+    const decoded = decodeText(bytes);
+    if (decoded === null) return text(`${path}: binary file (${mime}, ${formatBytes(bytes.byteLength)}): not shown as text.`);
+    const all = decoded.split("\n");
+    const start = (from_line ?? 1) - 1;
+    const count = lines ?? 2000;
+    const slice = all.slice(start, start + count).join("\n");
+    const more = start + count < all.length ? `\n… (lines ${start + 1}-${start + count} of ${all.length}; read on with from_line=${start + count + 1})` : "";
+    return text(clip(slice) + more);
+  });
+
+  server.registerTool("write_file", {
+    title: "Write a file",
+    description: "Create or replace a file of the instance (folders are created). Text as is, or base64 for binary files. "
+      + "It overwrites an existing file.",
+    inputSchema: {
+      path: z.string().min(1).describe("e.g. reports/summary.md"),
+      content: z.string(),
+      encoding: z.enum(["utf8", "base64"]).optional().describe("base64 for binary content (default utf8)"),
+    },
+    annotations: { ...writes, destructiveHint: true },
+  }, async ({ path, content, encoding }) => {
+    const clean = path.replace(/\\/g, "/").replace(/^(\.\/)+/, "");
+    const slash = clean.lastIndexOf("/");
+    const dir = slash > 0 ? clean.slice(0, slash) : ".";
+    const name = clean.slice(slash + 1);
+    if (!name || name === "." || name === "..") return fail("The path must name a file.");
+    const data = encoding === "base64" ? Buffer.from(content, "base64") : Buffer.from(content, "utf8");
+    // into its folder when it exists (absolute paths of volumes too), else from the workspace, creating the folders
+    const dirExists = dir === "." || (await deps.api("GET", `/api/v1/files/list?path=${encodeURIComponent(dir)}`)).status === 200;
+    if (!dirExists && path.startsWith("/")) return fail(`Folder ${dir} not found.`);
+    const form = new FormData();
+    form.append("path", dirExists ? dir : ".");
+    form.append("file", new File([data], name));
+    form.append("relativePath", dirExists ? name : clean);
+    const r = unwrap(await deps.api("POST", "/api/v1/files/upload", form));
+    if (!r.ok) return fail(r.error);
+    const done = r.data as { count?: number; excluded?: { count: number; reasons: string[] } };
+    if (!done.count) return fail(`Not written: ${done.excluded?.reasons?.join(", ") || "excluded"}`);
+    return text(`Wrote ${clean} (${formatBytes(data.byteLength)}).`);
+  });
+
+  server.registerTool("manage_file", {
+    title: "Make a folder, rename or delete",
+    description: "Make a folder (mkdir), rename a file or folder in place (rename, with new_name), or delete one (delete; "
+      + "a folder that is not empty needs recursive: true).",
+    inputSchema: {
+      action: z.enum(["mkdir", "rename", "delete"]),
+      path: z.string().min(1),
+      new_name: z.string().optional().describe("For rename: the new name, without folders"),
+      recursive: z.boolean().optional().describe("For delete: also a folder with contents"),
+    },
+    annotations: { ...writes, destructiveHint: true },
+  }, async ({ action, path, new_name, recursive }) => {
+    if (action === "rename" && !new_name) return fail("rename needs new_name.");
+    const body = action === "mkdir" ? { path } : action === "rename" ? { path, newName: new_name } : { path, recursive: recursive === true };
+    const r = unwrap(await deps.api("POST", `/api/v1/files/${action}`, body));
+    return r.ok ? text(`${action}: ${path}${action === "rename" ? ` → ${new_name}` : ""} done.`) : fail(r.error);
   });
 
   server.registerTool("list_operations", {

@@ -1,6 +1,6 @@
 # Polpo as an MCP connector
 
-Every Polpo server is also an [MCP](https://modelcontextprotocol.io) server. Claude Code, Codex, Claude Desktop, Cursor and any other MCP client can use your instance: ask Polpo to do things, chat with agents, follow tasks and missions, read data, make artifacts, approve requests, and call any REST operation.
+Every Polpo server is also an [MCP](https://modelcontextprotocol.io) server. Claude Code, Codex, Claude Desktop, Cursor and any other MCP client can use your instance: ask Polpo to do things, chat with agents, follow tasks and missions, read data, read and write files, make artifacts, approve requests, and call any REST operation.
 
 - **Endpoint:** `https://<your-polpo-host>/mcp` (Streamable HTTP, stateless).
 - **Authentication:** your Polpo API key, as `Authorization: Bearer <key>` (or `X-API-Key: <key>`), or the MCP key (`POLPO_MCP_KEY`, below), or OAuth (a sign-in) for Claude and ChatGPT connectors. A server started without any API key, MCP key or login accepts calls without one: never make such a server reachable from the internet.
@@ -20,9 +20,11 @@ The connector exposes a small set of tools designed for what people do, rather t
 | `list_artifacts`, `get_artifact`, `create_artifact` | Documents, html dashboards and designs, diagrams. |
 | `list_data_sources`, `query_data` | Structured data. |
 | `list_approvals`, `resolve_approval` | Decide on requests that wait for a person. |
+| `list_files`, `search_files`, `read_file` | Browse and read the instance's files (the agents' workspace, `.polpo`, volumes): text by line ranges, images and PDFs as they are. |
+| `write_file`, `manage_file` | Create or replace a file (text or base64), make folders, rename, delete. |
 | `list_operations`, `call_operation` | Every REST operation of the server (more than 300), for anything else. |
 
-Read-only tools are marked as such (`readOnlyHint`); `call_operation` and `resolve_approval` are marked destructive, so clients ask before running them.
+Read-only tools are marked as such (`readOnlyHint`); `call_operation`, `resolve_approval`, `write_file` and `manage_file` are marked destructive, so clients ask before running them.
 
 ## Setup
 

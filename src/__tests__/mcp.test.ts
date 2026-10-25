@@ -53,8 +53,10 @@ describe("Polpo MCP server", () => {
     expect(tools.map((t) => t.name)).toEqual([
       "ask_polpo", "chat_with_agent", "list_agents", "list_tasks", "get_task", "create_task", "list_missions", "get_mission",
       "list_artifacts", "get_artifact", "create_artifact", "list_data_sources", "query_data", "list_approvals", "resolve_approval",
+      "list_files", "search_files", "read_file", "write_file", "manage_file",
       "list_operations", "call_operation",
     ]);
+    expect(tools.find((t) => t.name === "write_file")!.annotations).toMatchObject({ destructiveHint: true });
     expect(tools.find((t) => t.name === "list_tasks")!.annotations).toMatchObject({ readOnlyHint: true });
     expect(tools.find((t) => t.name === "call_operation")!.annotations).toMatchObject({ destructiveHint: true });
   });

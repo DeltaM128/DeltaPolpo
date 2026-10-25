@@ -722,20 +722,22 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       version: POLPO_PACKAGE_VERSION,
       routes: () => app.routes,
       api: async (method, path, body, headers) => {
+        const form = body instanceof FormData;
         const res = await app.request(path, {
           method,
           headers: {
-            ...(body !== undefined ? { "content-type": "application/json" } : {}),
+            ...(body !== undefined && !form ? { "content-type": "application/json" } : {}),
             ...trustedApiCallHeaders(),
             ...(opts?.apiKeys?.[0] ? { authorization: `Bearer ${opts.apiKeys[0]}` } : {}),
             ...headers,
           },
-          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+          ...(body !== undefined ? { body: form ? body : JSON.stringify(body) } : {}),
         });
-        const raw = await res.text();
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const raw = new TextDecoder().decode(bytes);
         let parsed: unknown = raw;
         try { parsed = JSON.parse(raw); } catch { /* not JSON */ }
-        return { status: res.status, body: parsed, headers: res.headers };
+        return { status: res.status, body: parsed, headers: res.headers, bytes };
       },
     }));
   });
