@@ -40,7 +40,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "- **Versioni**: ogni modifica tiene la precedente, e puoi tornare indietro.",
       "- In chat, una scheda per ogni artefatto creato: si apre accanto alla conversazione.",
       "",
-      "Le pagine girano isolate e leggono i dati con i permessi di chi le ha create. Le vecchie Views sono ancora lì, tra gli artefatti.",
+      "Le pagine girano isolate e leggono i dati con i permessi di chi le ha create. Le vecchie Views sono ancora lì, tra gli artefatti, segnate come **Legacy**: per i nuovi cruscotti usa le dashboard.",
     ].join("\n"),
     highlight: true,
     cta: { label: "Apri gli artefatti", to: "/artifacts" },
