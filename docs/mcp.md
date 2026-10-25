@@ -3,7 +3,7 @@
 Every Polpo server is also an [MCP](https://modelcontextprotocol.io) server. Claude Code, Codex, Claude Desktop, Cursor and any other MCP client can use your instance: ask Polpo to do things, chat with agents, follow tasks and missions, read data, make artifacts, approve requests, and call any REST operation.
 
 - **Endpoint:** `https://<your-polpo-host>/mcp` (Streamable HTTP, stateless).
-- **Authentication:** your Polpo API key, as `Authorization: Bearer <key>` (or `X-API-Key: <key>`). A server started without any API key or login accepts local calls without one, since it listens only on localhost.
+- **Authentication:** your Polpo API key, as `Authorization: Bearer <key>` (or `X-API-Key: <key>`), or OAuth (a sign-in) for Claude and ChatGPT connectors. A server started without any API key or login accepts local calls without one, since it listens only on localhost.
 - **Local process instead of a URL:** `polpo mcp --url <server> --api-key <key>` runs the same tools over stdio and forwards them to the server.
 
 ## Tools
@@ -75,7 +75,25 @@ In `claude_desktop_config.json`:
 
 ### Claude (web, Desktop, mobile) and ChatGPT as custom connectors
 
-These connect with OAuth: a sign-in with your Polpo account instead of a key. OAuth support for the connector is coming next. Until then, use a client that sends the API key in a header.
+These connect with OAuth: you add the connector by URL and allow it on a Polpo consent page.
+
+- **Claude:** Settings → Connectors → Add custom connector, URL `https://<your-polpo-host>/mcp`.
+- **ChatGPT:** Settings → Apps → Advanced settings → Developer mode, then Create app with the same URL and OAuth.
+
+The client discovers everything from the `401` it gets at first, so there is nothing else to configure:
+
+1. The `401` points to the protected resource metadata (RFC 9728).
+2. That names Polpo as the authorization server (RFC 8414 metadata).
+3. The client registers itself, with a Client ID Metadata Document or Dynamic Client Registration.
+4. It sends you to Polpo's consent page.
+
+On the consent page you allow the app:
+- if you are signed in to the dashboard, with one click;
+- otherwise by entering the server's API key.
+
+Polpo then issues an access token (1 hour) and a refresh token (30 days, rotated at every use). Tokens are stored hashed in `.polpo/oauth.json`; delete a client's tokens there, or call `/oauth/revoke`, to disconnect it.
+
+**Reachability:** Claude's and ChatGPT's servers must reach your Polpo over public HTTPS. An instance behind Tailscale serve is only reachable on your tailnet: use Tailscale Funnel or a reverse proxy with a public hostname. If the public URL differs from what the server sees, set `POLPO_PUBLIC_URL` (e.g. `https://polpo.example.com`), or make the proxy send `X-Forwarded-Host` and `X-Forwarded-Proto`. Claude Code is a local app, so it can sign in with OAuth over the tailnet too.
 
 ## Security
 

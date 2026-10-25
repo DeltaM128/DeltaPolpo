@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Polpo come connettore MCP",
     summary: "Usa Polpo da Claude Code, Codex, Claude Desktop o Cursor: chiedi a Polpo, parla con gli agenti, segui task e dati.",
     body: [
-      "Ogni server Polpo è anche un **server MCP** su `/mcp`: lo colleghi a Claude Code, Codex, Claude Desktop, Cursor e agli altri client MCP con la tua chiave API.",
+      "Ogni server Polpo è anche un **server MCP** su `/mcp`: lo colleghi a Claude Code, Codex, Cursor e agli altri client MCP con la tua chiave API, oppure come **connettore personalizzato** in Claude e ChatGPT, con un accesso (OAuth) invece della chiave.",
       "",
       "- **ask_polpo**: chiedi qualsiasi cosa a Polpo, come in chat.",
       "- **chat_with_agent**: parla con un agente.",

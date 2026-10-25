@@ -44,7 +44,9 @@ import {
   CHAT_ORIGIN_HEADER,
 } from "@polpo-ai/server";
 import { getCookie } from "hono/cookie";
+import { createHmac } from "node:crypto";
 import { handleMcpRequest } from "./mcp.js";
+import { authorizationServerMetadata, consentPage, OAuthError, OAuthServer, protectedResourceMetadata } from "./oauth.js";
 import { hasValidApiKey } from "./middleware/instance-auth.js";
 import { reactionHint } from "../notifications/telegram-reactions.js";
 // Node.js-only routes (stay in src/server/routes/)
@@ -574,6 +576,116 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
   app.use("/v1/chat/completions", (c, next) => currentEventOrigin() ? next() : withEventOrigin({ source: "api" }, () => next()));
   app.route("/v1/chat/completions", completionApp);
 
+  // ── OAuth for the MCP connector (Claude web/Desktop/mobile, ChatGPT…) ──
+  // The public origin as the client sees it (a reverse proxy or Tailscale in front): POLPO_PUBLIC_URL,
+  // else the forwarded host and protocol, else the request URL.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
+  const publicOrigin = (c: any): string => {
+    if (process.env.POLPO_PUBLIC_URL) return process.env.POLPO_PUBLIC_URL.replace(/\/+$/, "");
+    const url = new URL(c.req.url);
+    const host = (c.req.header("x-forwarded-host") as string | undefined)?.split(",")[0]?.trim() || c.req.header("host") || url.host;
+    const proto = (c.req.header("x-forwarded-proto") as string | undefined)?.split(",")[0]?.trim() || url.protocol.replace(":", "");
+    return `${proto}://${host}`;
+  };
+  let oauth: { dir: string; server: OAuthServer } | undefined;
+  const oauthServer = (): OAuthServer => {
+    const dir = activePolpoDir();
+    if (!oauth || oauth.dir !== dir) oauth = { dir, server: new OAuthServer(dir) };
+    return oauth.server;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
+  const oauthFail = (c: any, err: unknown) => err instanceof OAuthError
+    ? c.json({ error: err.code, error_description: err.message }, 400)
+    : c.json({ error: "server_error", error_description: err instanceof Error ? err.message : String(err) }, 500);
+  // How the person on the consent page may allow a client: signed in to the dashboard, the API key, or open (no auth at all)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
+  const consentIdentity = (c: any): { method: "session" | "api-key" | "open"; email?: string } => {
+    const keys = opts?.apiKeys ?? [];
+    const instanceAuth = isInstanceAuthEnabled();
+    const session = instanceAuth && opts?.workDir ? validateSession(getPolpoDir(opts.workDir), getCookie(c, AUTH_COOKIE_NAME)) : null;
+    if (session) return { method: "session", email: session.email };
+    if (!instanceAuth && keys.length === 0) return { method: "open" };
+    return { method: "api-key" };
+  };
+  // The consent form carries a token bound to the dashboard session (and this process), checked on submit
+  const consentSecret = globalThis.crypto.getRandomValues(new Uint8Array(32));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
+  const consentCsrf = (c: any): string => createHmac("sha256", consentSecret).update(getCookie(c, AUTH_COOKIE_NAME) ?? "no-session").digest("base64url");
+  const AUTHORIZE_PARAMS = ["response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state", "scope", "resource"] as const;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono context
+  const authorizeParams = (source: Record<string, any>) => Object.fromEntries(AUTHORIZE_PARAMS.map((k) => [k, typeof source[k] === "string" ? source[k] : undefined]));
+
+  for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
+    app.get(path, (c) => c.json(protectedResourceMetadata(publicOrigin(c))));
+  }
+  for (const path of ["/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server/mcp"]) {
+    app.get(path, (c) => c.json(authorizationServerMetadata(publicOrigin(c))));
+  }
+  app.post("/oauth/register", async (c) => {
+    try {
+      const client = oauthServer().register(await c.req.json().catch(() => ({})));
+      return c.json({ ...client, token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }, 201);
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+  });
+  app.get("/oauth/authorize", async (c) => {
+    const params = authorizeParams(c.req.query());
+    try {
+      const client = await oauthServer().checkAuthorizeRequest(params, `${publicOrigin(c)}/mcp`);
+      const who = consentIdentity(c);
+      return c.html(consentPage({ client, redirectUri: params.redirect_uri!, params: { ...params, csrf: consentCsrf(c) }, ...who }));
+    } catch (err) {
+      return c.html(`<!doctype html><meta charset="utf-8"><title>Polpo</title><p>This connection request is not valid: ${err instanceof Error ? err.message.replace(/[<>&]/g, "") : "error"}</p>`, 400);
+    }
+  });
+  app.post("/oauth/authorize", async (c) => {
+    const form = await c.req.parseBody();
+    const params = authorizeParams(form);
+    const resource = `${publicOrigin(c)}/mcp`;
+    let client;
+    try {
+      client = await oauthServer().checkAuthorizeRequest(params, resource);
+    } catch (err) {
+      return c.html(`<!doctype html><meta charset="utf-8"><title>Polpo</title><p>This connection request is not valid: ${err instanceof Error ? err.message.replace(/[<>&]/g, "") : "error"}</p>`, 400);
+    }
+    const back = new URL(params.redirect_uri!);
+    if (params.state) back.searchParams.set("state", params.state);
+    back.searchParams.set("iss", publicOrigin(c));
+    if (form.decision !== "allow") {
+      back.searchParams.set("error", "access_denied");
+      return c.redirect(back.toString(), 302);
+    }
+    const who = consentIdentity(c);
+    if (typeof form.csrf !== "string" || form.csrf !== consentCsrf(c)) {
+      return c.html(consentPage({ client, redirectUri: params.redirect_uri!, params: { ...params, csrf: consentCsrf(c) }, ...who, error: "This page expired: try again." }), 400);
+    }
+    let subject = who.email ?? "local";
+    if (who.method === "api-key") {
+      const key = typeof form.api_key === "string" ? form.api_key : "";
+      const ok = hasValidApiKey(new Request("http://x/", { headers: { "x-api-key": key } }), opts?.apiKeys ?? []);
+      if (!ok) return c.html(consentPage({ client, redirectUri: params.redirect_uri!, params: { ...params, csrf: consentCsrf(c) }, method: "api-key", error: "That API key is not valid." }), 401);
+      subject = "api-key";
+    }
+    back.searchParams.set("code", oauthServer().issueCode(params, resource, subject));
+    return c.redirect(back.toString(), 302);
+  });
+  app.post("/oauth/token", async (c) => {
+    try {
+      const body = await c.req.parseBody();
+      const form = Object.fromEntries(Object.entries(body).map(([k, v]) => [k, typeof v === "string" ? v : undefined]));
+      c.header("Cache-Control", "no-store");
+      return c.json(oauthServer().exchange(form));
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+  });
+  app.post("/oauth/revoke", async (c) => {
+    const body = await c.req.parseBody();
+    oauthServer().revoke(typeof body.token === "string" ? body.token : undefined);
+    return c.body(null, 200);
+  });
+
   // ── MCP: Polpo as a connector (Claude Code, Codex, Claude, ChatGPT…) ──
   // Streamable HTTP, stateless. The tools call this server's REST API in process, so they follow
   // the same rules; the caller is authenticated here: an API key (Bearer or X-API-Key) or a
@@ -584,12 +696,15 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     const instanceAuth = isInstanceAuthEnabled();
     if (!instanceAuth && keys.length === 0) return true;
     if (hasValidApiKey(c.req.raw, keys)) return true;
+    // an OAuth access token issued for this endpoint (Claude, ChatGPT and other connectors)
+    const auth = c.req.header("authorization") as string | undefined;
+    const bearer = auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : undefined;
+    if (bearer?.startsWith("polpo_at_") && oauthServer().verifyAccessToken(bearer, `${publicOrigin(c)}/mcp`)) return true;
     return instanceAuth && !!opts?.workDir && !!validateSession(getPolpoDir(opts.workDir), getCookie(c, AUTH_COOKIE_NAME));
   };
   app.all("/mcp", async (c) => {
     if (!mcpAuthorized(c)) {
-      const origin = new URL(c.req.url).origin;
-      c.header("WWW-Authenticate", `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
+      c.header("WWW-Authenticate", `Bearer resource_metadata="${publicOrigin(c)}/.well-known/oauth-protected-resource/mcp"`);
       return c.json({ error: "Authentication required: send Authorization: Bearer <your Polpo API key>" }, 401);
     }
     if (!orchestrator?.isInitialized) return c.json({ error: "Polpo is not initialized. Complete setup first." }, 503);

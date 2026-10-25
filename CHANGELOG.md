@@ -33,7 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Polpo as an MCP connector:** every server is also an MCP server at `/mcp` (Streamable HTTP, stateless), so Claude Code, Codex, Claude Desktop, Cursor and other MCP clients can use the instance.
   - **Tools:** 17 tools for what people do (`ask_polpo` delegates anything to Polpo; `chat_with_agent`; tasks, missions, artifacts, data, approvals) plus `list_operations` / `call_operation`, which reach every REST operation of the server (more than 300). There is not one tool per endpoint, to keep the model's context small. Read-only and destructive tools are annotated.
-  - **Authentication:** the API key as `Authorization: Bearer` or `X-API-Key`. An unauthenticated call gets a `401` with the OAuth protected-resource pointer.
+  - **Authentication:** the API key as `Authorization: Bearer` or `X-API-Key`, or **OAuth 2.1**, so it can be added as a custom connector in Claude (web, Desktop, mobile) and ChatGPT.
+    - **Discovery:** a `401` with the protected-resource pointer, then RFC 9728 and RFC 8414 metadata.
+    - **Client registration:** Client ID Metadata Documents or Dynamic Client Registration.
+    - **Codes:** authorization code with PKCE S256 only, `iss` in the response, loopback redirects on any port for Claude Code.
+    - **Consent page:** signed in to the dashboard, or with the API key; it has a session-bound CSRF token.
+    - **Tokens:** 1-hour access tokens and 30-day refresh tokens rotated at every use, stored hashed in `.polpo/oauth.json`; `/oauth/revoke`.
+    - **Public URL:** `POLPO_PUBLIC_URL`, or the `X-Forwarded-*` headers when behind a proxy.
   - **Same rules:** the tools call the server's own REST API in process.
   - **stdio:** `polpo mcp --url <server> --api-key <key>` runs the same tools over stdio for clients that start a process.
   - **Setup guide:** `docs/mcp.md`.
