@@ -70,6 +70,8 @@ import { tokenUsageRoutes } from "./routes/token-usage.js";
 import { appsRoutes } from "./routes/apps.js";
 import { dataRoutes } from "./routes/data.js";
 import { dataViewRoutes } from "./routes/data-views.js";
+import { artifactRoutes } from "./routes/artifacts.js";
+import { getArtifactStore } from "./artifact-runtime.js";
 import { storageRoutes } from "./routes/storage.js";
 import { getStorageRuntime } from "../storage/runtime.js";
 import { companyBrainRoutes } from "./routes/company-brain.js";
@@ -313,6 +315,7 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       const { createAllTools } = await import("../tools/system-tools.js");
       const { createMemoryTools } = await import("../tools/memory-tools.js");
       const { createDataAgentTools } = await import("../tools/data-tools.js");
+      const { createArtifactAgentTools } = await import("../tools/artifact-tools.js");
       const { createCompanyBrainAgentTools } = await import("../tools/company-brain-tools.js");
       const { createStorageAgentTools } = await import("../tools/storage-tools.js");
       const { resolveAgentVault } = await import("../vault/index.js");
@@ -405,6 +408,13 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
       tools.push(...createCompanyBrainAgentTools(polpoDir, agentConfig.name, agentConfig.allowedTools, o.getVaultStore(), (event) => {
         o.emit("brain:changed", event);
       }));
+      // Artifacts (documents, dashboards, designs) it makes in this chat; its own only
+      tools.push(...createArtifactAgentTools(agentConfig.allowedTools, () => ({
+        store: getArtifactStore(polpoDir),
+        author: agentConfig.name,
+        ...(context?.sessionId?.() ? { sessionId: context.sessionId()! } : {}),
+        emit: (payload) => o.emit("artifact:changed", payload),
+      })));
       // Buckets through host-side tools: credentials stay on the host.
       tools.push(...createStorageAgentTools(polpoDir, agentConfig.name, agentConfig.allowedTools, {
         vaultStore: o.getVaultStore(),
@@ -1042,6 +1052,15 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     return { runtime, store: runtime.store, vaultStore: o.getVaultStore() };
   }));
   authed.route("/views", dataViewRoutes(() => activeDataRegistry().store));
+  authed.route("/artifacts", artifactRoutes(() => ({
+    store: getArtifactStore(activePolpoDir()),
+    data: activeDataRegistry(),
+    author: (c) => {
+      const email = c.get("polpoUserEmail" as never) as string | undefined;
+      return email ? `person:${email}` : "person:dashboard";
+    },
+    emit: (payload) => orchestrator.emit("artifact:changed", payload),
+  })));
   authed.route("/storage", storageRoutes(activeStorage, () => orchestrator.getAgentWorkDir()));
   authed.route("/brain", companyBrainRoutes(activeCompanyBrain));
 
