@@ -671,7 +671,8 @@ export function createApp(orchestrator: Orchestrator, sseBridge: SSEBridge, opts
     }
     let subject = who.email ?? "local";
     if (who.method === "api-key") {
-      const key = typeof form.api_key === "string" ? form.api_key : "";
+      // pasted from an env file or with spaces: KEY=value, or the bare value
+      const key = typeof form.api_key === "string" ? form.api_key.trim().replace(/^(POLPO_MCP_KEY|POLPO_API_KEY)=/, "") : "";
       const ok = hasValidApiKey(new Request("http://x/", { headers: { "x-api-key": key } }), mcpKeys());
       if (!ok) return c.html(consentPage({ client, redirectUri: params.redirect_uri!, params: { ...params, csrf: consentCsrf(c) }, method: "api-key", error: "That API key is not valid." }), 401);
       subject = "api-key";

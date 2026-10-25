@@ -83,6 +83,7 @@ describe("MCP connector published on its own", () => {
       body: new URLSearchParams({ ...params, csrf, decision: "allow", api_key: key }).toString(),
     });
     expect((await submit("wrong")).status).toBe(401);
+    expect((await submit(` POLPO_MCP_KEY=${MCP_KEY}\n`)).status).toBe(302);
     const ok = await submit(MCP_KEY);
     expect(ok.status).toBe(302);
     const back = new URL(ok.headers.get("location")!);
