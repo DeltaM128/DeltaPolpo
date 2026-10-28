@@ -50,4 +50,19 @@ describe("local shell", () => {
     expect(ok).toMatchObject({ exitCode: 0, stdout: "out/01 - a" });
     expect((await shell.execute("exit 4")).exitCode).toBe(4);
   });
+
+  // On Windows Git's bash runs `sleep` as an msys process that taskkill /T does not reach: it kept
+  // running and kept the output open, so the run waited for it to finish by itself.
+  test.skipIf(localShell().name === "cmd.exe")("a command stopped for its timeout ends with what it started (Windows included)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "polpo-shell-"));
+    try {
+      const ws = new LocalWorkspace({ root, sandbox: { provider: "local", network: { mode: "open" }, resources: {}, providerOptions: {}, denied: [] } } as never, bashSafeEnv);
+      const r = await ws.exec("sleep 30; echo late", { timeoutMs: 1500 });
+      expect(r.timedOut).toBe(true);
+      expect(r.stdout).not.toContain("late");
+      expect(r.durationMs).toBeLessThan(15_000);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
