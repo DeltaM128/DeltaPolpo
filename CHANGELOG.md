@@ -9,19 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Checks can find what the task saved:** `test` and `script` expectations run with `POLPO_OUTPUT_DIR` set to the task's output folder, and `file_exists` paths may start with `$POLPO_OUTPUT_DIR/`. The folder of a run (`output/<mission run>/<NN> - <task>/`) is not known when the expectation is written.
-- **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
 
 ### Changed
-- A new mission whose name is taken is named `name (2)`, `name (3)`…, so every run of a playbook is its own mission.
-- Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
-- Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
 - **Task outputs are saved by run and by task, with readable names.** Each task now has its own folder under `output/` in the agents' working directory: `output/<mission run>/<NN> - <task title>/` for the tasks of a mission (the run name is already unique, e.g. `report (2)`, and the number follows the order of the tasks in the mission) and `output/tasks/<task title> - <id>/` for a task outside a mission. Before, each task got `.polpo/output/<task id>/`, a hidden folder named by an id that agents hardly used: a file the task named without a folder (`save it in report.md`) landed in the working directory, where every run overwrote the previous one and the files of all missions mixed. Now:
   - the agent is told that such a file goes in its output folder, and to create or edit files elsewhere only when the task is about them (e.g. a source file of the project), so coding tasks work as before;
   - the task message also gives the exact path of each new file its description names (`save it in report.md` → `output/report (2)/02 - Write report/report.md`): small local models follow a concrete path, not a rule. Names of files that already exist in the working directory, or that the tasks it depends on produced, are left out (they are files to edit or to read);
   - a task that depends on others is told where their folders are and which files they contain, so `read data.md` finds the file the previous task saved;
   - the mission page has an **Output** button (the run's folder) and the task page an **Output folder** card, both opening the Files page there (`/files?workspacePath=…`, relative to the agents' workspace).
 
+## [0.5.0] — 2026-10-25 — Artifacts and the MCP connector
+
+### Added
+- **Artifacts** replace Views: one concept for what agents and people make to look at and keep.
+  - **Types:**
+    - `doc` (Markdown);
+    - `html`, one self-contained page with a kind: dashboard, design, app, report, page;
+    - `svg` (a drawing) and `mermaid` (a diagram);
+    - `view`, the former data views, still shown and working.
+  - **Data in html artifacts:** the page runs isolated, in a sandbox without same-origin and with a strict CSP: no network except a few CDNs for libraries. It reads the instance's data sources through a `polpo` bridge with the **rights of its author**: an agent's artifact sees only the sources and fields that agent is granted. The bridge offers:
+    - `polpo.sources()`, `polpo.describe(id)`, `polpo.query({...})` and `polpo.sql(id, …)` (read-only);
+    - `polpo.onRefresh(fn)`, called every `refreshSeconds` and when a data source changes;
+    - `polpo.theme` / `polpo.onTheme`.
+  - **Versions:** every change keeps the previous content with its author and note, and any version can be restored.
+  - **Tools:** `artifact_create`, `artifact_update` (whole content, or find/replace edits), `artifact_get` (also earlier versions), `artifact_list`, `artifact_delete`.
+    - Polpo has all of them; agents get them with `artifact_*` in allowedTools (a new "Artifacts" category in the Tools tab).
+    - Agents change only their own artifacts.
+    - `navigate_to` gains `artifacts` / `artifact`.
+  - **API:** `GET/POST /artifacts`, `GET/PATCH/DELETE /artifacts/:id`, `POST /artifacts/:id/restore/:version`, `POST /artifacts/:id/data` (the bridge). The event is `artifact:changed`. Storage is the `artifacts` table (SQLite/Postgres migrations) or `.polpo/artifacts/` in file mode.
+  - **UI:**
+    - an **Artifacts** section (replacing Views in every menu) with a gallery by type and search;
+    - a viewer with live content, versions and restore, source, data reload, full screen and download;
+    - in the chat, a card for each artifact made or changed, which opens it next to the conversation.
+
+- **Polpo as an MCP connector:** every server is also an MCP server at `/mcp` (Streamable HTTP, stateless), so Claude Code, Codex, Claude Desktop, Cursor and other MCP clients can use the instance.
+  - **Tools:** 22 tools for what people do (`ask_polpo` delegates anything to Polpo; `chat_with_agent`; tasks, missions, artifacts, data, approvals; files: `list_files`, `search_files`, `read_file` with text by line ranges and images and PDFs as they are, `write_file`, `manage_file` to make folders, rename and delete) plus `list_operations` / `call_operation`, which reach every REST operation of the server (more than 300). There is not one tool per endpoint, to keep the model's context small. Read-only and destructive tools (`call_operation`, `resolve_approval`, `write_file`, `manage_file`) are annotated.
+  - **Authentication:** the API key as `Authorization: Bearer` or `X-API-Key`, or **OAuth 2.1**, so it can be added as a custom connector in Claude (web, Desktop, mobile) and ChatGPT.
+    - **Discovery:** a `401` with the protected-resource pointer, then RFC 9728 and RFC 8414 metadata.
+    - **Client registration:** Client ID Metadata Documents or Dynamic Client Registration.
+    - **Codes:** authorization code with PKCE S256 only, `iss` in the response, loopback redirects on any port for Claude Code.
+    - **Consent page:** signed in to the dashboard, or with the API key or MCP key; it has a session-bound CSRF token.
+    - **Tokens:** 1-hour access tokens and 30-day refresh tokens rotated at every use, stored hashed in `.polpo/oauth.json`; `/oauth/revoke`.
+    - **Public URL:** the `X-Forwarded-*` headers when behind a proxy, or `POLPO_PUBLIC_URL`, which may carry a path (a proxy that mounts Polpo under `/name`) and applies to requests through its host.
+  - **Publishing only the connector:** `POLPO_MCP_KEY` opens `/mcp` and the consent page without putting an API key on the dashboard and REST API, so an instance can expose `/mcp`, `/oauth` and the discovery documents (for example with Tailscale Funnel) and keep the rest private. Since these endpoints can be public, open client registration is capped (200 clients; ones holding tokens are kept), and client metadata documents are fetched only from public addresses.
+  - **Same rules:** the tools call the server's own REST API in process.
+  - **stdio:** `polpo mcp --url <server> --api-key <key>` runs the same tools over stdio for clients that start a process.
+  - **Setup guide:** `docs/mcp.md`.
+- The API key middleware also accepts `Authorization: Bearer <key>`, not only `X-API-Key`.
+
+### Changed
+- Polpo's prompt now says when to make an artifact (documents, dashboards on real data, designs, diagrams) and keeps `render_widget` for small throwaway visuals in the chat. The old prompts contradicted each other on views vs widgets.
+- `data_create_view` / `data_update_view` are deprecated in favor of html dashboards. `/views` redirects to the artifacts of type view.
+- In the Artifacts section the former data views are marked **Legacy**: they have no tab of their own and a note says to make html dashboards instead.
+
 ### Fixed
+- A data view shown in the dashboard queried its sources as an administrator, so an agent's view could show data that agent is not granted. As an artifact, a view's data bridge uses its author's rights.
+
+## [0.4.10] — 2026-10-15 — Fixes from DeltaPolpo
+
+Most of these were found and fixed by @DeltaM128 in the DeltaPolpo fork (#127; #133–#137, #144, #145). Thanks!
+
+### Added
+- **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
+
+### Changed
+- A new mission whose name is taken is named `name (2)`, `name (3)`…, so every run of a playbook is its own mission.
+- Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
+- Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
+
+### Fixed
+- **Telegram voice notes in private chats are transcribed on arrival**, as in groups, and their words become the message.
+  - **Why:** before, the model got an audio file it cannot hear and had to transcribe it with its tools. Polpo has no speech-to-text key of its own, so it delegated the transcription to an agent as a task. The transcript then lived only in a tool result, so the next message no longer knew what the voice note said ("I don't have the content of the voice message").
+  - **Which key:** the agent's own speech-to-text key (vault, then environment). Polpo uses the environment, else the first agent's key.
+  - **Without a key:** the audio stays attached, as before.
 - Task runs ignored the custom providers of `polpo.json` (local model servers such as Ollama or LM Studio, gateways): their models worked in chat, but tasks failed with "Model not found". The task runner now registers them, with their secrets from the vault.
 - Playbooks could not be run from the dashboard: the run dialog existed but no button opened it. Playbook cards and the playbook page now have a Run button.
 - Playbooks with checkpoints, delays or quality gates could be saved but not run: the blocked tasks lacked the `dependsOn` the mission schema requires, and the run answered a plain-text 500 ("Unexpected token 'I'… is not valid JSON" in the dashboard). The dependencies are now added when the playbook runs, and a run that cannot start answers a JSON 400 and leaves no mission behind.
