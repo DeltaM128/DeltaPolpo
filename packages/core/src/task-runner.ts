@@ -19,6 +19,8 @@ function pathJoin(...parts: string[]): string {
 
 /** Files of a dependency listed in the prompt; the folder path shows the rest. */
 const MAX_LISTED_OUTPUT_FILES = 20;
+/** How long past its timeout a script task's run may take to stop its command and report (adapters/script.ts). */
+const SCRIPT_STOP_GRACE_MS = 30_000;
 
 /** Return the directory portion of a path. */
 function pathDirname(p: string): string {
@@ -337,7 +339,9 @@ export class TaskRunner {
       const timeout = this.timeoutOf(task);
       if (timeout > 0) {
         const elapsed = Date.now() - new Date(run.startedAt).getTime();
-        if (elapsed > timeout) {
+        // a script task stops its command at the deadline itself and reports why: the hard kill waits a little longer
+        const grace = run.config?.script ? SCRIPT_STOP_GRACE_MS : 0;
+        if (elapsed > timeout + grace) {
           this.ctx.emitter.emit("log", { level: "warn", message: `[${run.taskId}] Timed out (${Math.round(elapsed / 1000)}s)` });
           this.ctx.emitter.emit("task:timeout", { taskId: run.taskId, elapsed, timeout });
           if (run.pid > 0) {

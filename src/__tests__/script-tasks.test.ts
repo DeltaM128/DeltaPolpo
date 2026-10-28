@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { TaskRunner, parseMissionDocument, missionTaskScript, scriptTaskDescription } from "@polpo-ai/core";
 import { TypedEmitter } from "../core/events.js";
 import { MissionExecutor } from "../core/mission-executor.js";
@@ -144,6 +145,14 @@ describe("spawning a script task", () => {
   });
 });
 
+/** Whether a process whose command line contains `text` is still running. */
+function leftover(text: string): boolean {
+  const out = process.platform === "win32"
+    ? spawnSync("powershell.exe", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }"], { encoding: "utf8" }).stdout
+    : spawnSync("ps", ["-eo", "args"], { encoding: "utf8" }).stdout;
+  return (out ?? "").split(/\r?\n/).some((line) => line.includes(text) && !line.includes("CommandLine"));
+}
+
 // The commands below are bash: skip them where the local shell is cmd.exe (Windows without Git).
 describe.skipIf(localShell().name === "cmd.exe")("running a script", () => {
   const task = { id: "t1", title: "Converti" } as Task;
@@ -186,11 +195,13 @@ describe.skipIf(localShell().name === "cmd.exe")("running a script", () => {
     expect(r.transcript.at(-1)).toMatchObject({ type: "error" });
   });
 
-  test("it stops at the task's deadline", async () => {
-    const r = await run("sleep 20", { deadline: Date.now() + 1000 });
+  test("it stops at the task's deadline, with what it started", async () => {
+    // not the last command, so bash runs it as a child (msys process group on Windows)
+    const r = await run("sleep 23; echo late", { deadline: Date.now() + 1000 });
     expect(r.result.exitCode).not.toBe(0);
     expect(r.result.stderr).toContain("Timed out after 1s");
     expect(r.result.duration).toBeLessThan(10_000);
+    expect(leftover("sleep 23")).toBe(false);
   }, 20_000);
 
   test("killing the run stops the command", async () => {
