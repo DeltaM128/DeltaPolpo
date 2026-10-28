@@ -4,6 +4,7 @@ import {
   connect,
   disconnect,
   draftFromMission,
+  draftWarnings,
   missionFromDraft,
   parseNodeId,
   removeNodes,
@@ -108,5 +109,33 @@ describe("playbook graph editing", () => {
     expect(mission).not.toHaveProperty("checkpoints");
     expect(mission).not.toHaveProperty("delays");
     expect((mission.tasks as { title: string }[]).map((t) => t.title)).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("script tasks", () => {
+  test("a new script is a task with an empty command and no agent", () => {
+    const { draft, ref } = addNode(draftFromMission({ tasks: [{ title: "Scrivi", description: "x", assignTo: "dev" }] }), "script");
+    expect(ref).toEqual(T(1));
+    expect(draft.tasks[1]).toEqual({ title: "New script", script: { command: "" } });
+    expect(draftWarnings(draft)).toEqual(['Script "New script" has no command.']);
+  });
+
+  test("saved without agent or empty description; switching back to an agent drops the command", () => {
+    const base = { name: "p", tasks: [{ title: "Converti", description: "", assignTo: "dev" }] };
+    let draft = draftFromMission(base);
+    draft = updateTask(draft, 0, { script: { command: "make report" }, assignTo: undefined }).draft!;
+    expect(missionFromDraft(base, draft).tasks).toEqual([{ title: "Converti", script: { command: "make report" } }]);
+    expect(draftWarnings(draft)).toEqual([]);
+
+    draft = updateTask(draft, 0, { script: undefined }).draft!;
+    expect(missionFromDraft(base, draft).tasks).toEqual([{ title: "Converti", description: "" }]);
+    expect(draftWarnings(draft)).toEqual(['"Converti" has no agent assigned.', '"Converti" has no description.']);
+  });
+
+  test("editing a copy never changes the command of the original draft", () => {
+    const draft = draftFromMission({ tasks: [{ title: "A", script: { command: "ls" } }] });
+    const next = updateTask(draft, 0, { title: "B" }).draft!;
+    next.tasks[0].script!.command = "rm -rf x";
+    expect(draft.tasks[0].script!.command).toBe("ls");
   });
 });

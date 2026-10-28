@@ -187,6 +187,7 @@ export { DEFAULT_DIMENSIONS, buildRubricSection, computeWeightedScore, computeMe
 export { validateReviewPayload, ReviewPayloadSchema, ReviewScoreSchema, REVIEW_JSON_SCHEMA, type ValidatedReviewPayload } from "./assessment-schemas.js";
 export { withRetry, isTransientError, type RetryOptions } from "./retry.js";
 export { OUTPUT_ROOT, safeFolderName, taskOutputPath, missionOutputPath, taskPosition, bareFileNames } from "./output-paths.js";
+export { SCRIPT_ASSIGNEE, isScriptTask, missionTaskScript, scriptTaskDescription, type MissionTaskScript } from "./script-task.js";
 
 // ── Sandboxes and storage mounts ────────────────────────────────────────
 export {

@@ -5,6 +5,7 @@ import { agentMemoryScope } from "./memory-store.js";
 import { normalizeSandboxSettings, resolveSandbox, SandboxVolumeGrantError, type ResolvedSandboxVolume, type SandboxSettings } from "./sandbox.js";
 import type { RunRecord } from "./run-store.js";
 import { bareFileNames, taskOutputPath, taskPosition } from "./output-paths.js";
+import { SCRIPT_ASSIGNEE, isScriptTask, missionTaskScript } from "./script-task.js";
 
 // ── Pure path helpers (no node:path dependency) ─────────────────────────
 
@@ -108,6 +109,11 @@ export class TaskRunner {
       await this.ctx.runStore.deleteRun(run.id);
       this.staleWarned.delete(run.taskId);
     }
+  }
+
+  /** How long a task may run (ms, 0 = no limit): its maxDuration, or the instance's taskTimeout. */
+  private timeoutOf(task: Task | undefined): number {
+    return task?.maxDuration ?? this.ctx.config.settings.taskTimeout ?? 30 * 60 * 1000;
   }
 
   /** Output folder of a task, relative to the agents' working directory (see output-paths.ts). */
@@ -309,7 +315,6 @@ export class TaskRunner {
    * - Warn at staleThreshold, kill at 2x staleThreshold
    */
   async enforceHealthChecks(): Promise<void> {
-    const defaultTimeout = this.ctx.config.settings.taskTimeout ?? 30 * 60 * 1000;
     const staleThreshold = this.ctx.config.settings.staleThreshold ?? 5 * 60 * 1000;
 
     const activeRuns = await this.ctx.runStore.getActiveRuns();
@@ -329,7 +334,7 @@ export class TaskRunner {
 
       // 1. Task timeout (hard kill)
       const task = await this.ctx.registry.getTask(run.taskId);
-      const timeout = task?.maxDuration ?? defaultTimeout;
+      const timeout = this.timeoutOf(task);
       if (timeout > 0) {
         const elapsed = Date.now() - new Date(run.startedAt).getTime();
         if (elapsed > timeout) {
@@ -533,8 +538,87 @@ export class TaskRunner {
     return this.ctx.spawner.isAlive(pid);
   }
 
+  /**
+   * The task's description with the context the agent needs prepended, in XML-like tags the agent
+   * prompt can reference: memory, the mission, the files of the tasks it depends on, its output folder.
+   */
+  private async describeWithContext(task: Task, mission: Mission | undefined, outputFolder: string): Promise<string> {
+    const contextParts: string[] = [];
+
+    // 1. Shared memory (persistent cross-session knowledge, visible to all agents)
+    const sharedMemory = (await this.ctx.memoryStore?.get()) ?? "";
+    if (sharedMemory) {
+      contextParts.push(`<shared-memory>\n${sharedMemory}\n</shared-memory>`);
+    }
+
+    // 1b. Agent-specific memory (private knowledge for the assigned agent)
+    if (task.assignTo) {
+      const agentMem = (await this.ctx.memoryStore?.get(agentMemoryScope(task.assignTo))) ?? "";
+      if (agentMem) {
+        contextParts.push(`<agent-memory agent="${task.assignTo}">\n${agentMem}\n</agent-memory>`);
+      }
+    }
+
+    // 2. Mission context — if this task belongs to a mission, include the mission goal and sibling tasks
+    if (task.group) {
+      try {
+        const missionParts: string[] = [];
+
+        // Original user prompt that generated this mission (the "why")
+        if (mission?.prompt) {
+          missionParts.push(`Mission goal: ${mission.prompt}`);
+        }
+
+        // Sibling tasks — just titles and statuses for awareness, not full descriptions
+        const allTasks = await this.ctx.registry.getAllTasks();
+        const siblings = allTasks.filter(t => t.group === task.group && t.id !== task.id);
+        if (siblings.length > 0) {
+          missionParts.push(`Other tasks in this mission:`);
+          for (const s of siblings) {
+            const marker = s.status === "done" ? "[done]"
+              : s.status === "in_progress" ? "[in progress]"
+              : s.status === "failed" ? "[failed]"
+              : "[pending]";
+            missionParts.push(`  ${marker} "${s.title}" → ${s.assignTo}`);
+          }
+        }
+
+        if (missionParts.length > 0) {
+          contextParts.push(`<mission-context>\n${missionParts.join("\n")}\n</mission-context>`);
+        }
+      } catch { /* best effort — mission may have been deleted */ }
+    }
+
+    // 3. Where the tasks this one depends on saved their files (each task has its own output folder)
+    const dependencyOutputs = await this.dependencyOutputs(task, mission?.data);
+    if (dependencyOutputs.block) contextParts.push(dependencyOutputs.block);
+
+    // 4. Its own output folder, with the path of each new file the description names
+    contextParts.push(await this.outputFolderBlock(task, outputFolder, dependencyOutputs.files));
+
+    return contextParts.length > 0 ? contextParts.join("\n\n") + "\n\n" + task.description : task.description;
+  }
+
+  /** Environment of a script task: its output folder and those of the tasks it depends on, in order. */
+  private async scriptEnv(task: Task, mission: Mission | undefined, outputDir: string): Promise<Record<string, string>> {
+    const env: Record<string, string> = { POLPO_OUTPUT_DIR: outputDir, POLPO_TASK: task.title };
+    if (mission?.name) env.POLPO_MISSION = mission.name;
+    if (!task.dependsOn?.length) return env;
+    const all = await this.ctx.registry.getAllTasks();
+    let n = 0;
+    for (const depId of task.dependsOn) {
+      const dep = all.find((t) => t.id === depId);
+      if (!dep) continue;
+      const folder = await this.outputPathOf(dep, dep.missionId && dep.missionId === task.missionId ? mission?.data : undefined);
+      env[`POLPO_DEP_${++n}`] = pathJoin(this.ctx.agentWorkDir, folder);
+    }
+    return env;
+  }
+
   async spawnForTask(task: Task): Promise<void> {
-    const agent = await this.ctx.agentStore.getAgent(task.assignTo);
+    // A script task names no agent: Polpo runs its command (script-task.ts)
+    const scripted = isScriptTask(task);
+    const agent = scripted ? { name: SCRIPT_ASSIGNEE } : await this.ctx.agentStore.getAgent(task.assignTo);
     if (!agent) {
       this.ctx.emitter.emit("log", { level: "error", message: `No agent "${task.assignTo}" for task "${task.title}"` });
       await this.ctx.registry.transition(task.id, "assigned");
@@ -593,64 +677,23 @@ export class TaskRunner {
     const outputFolder = taskOutputPath(task, taskPosition(mission?.data, task.title));
     const outputDir = pathJoin(this.ctx.agentWorkDir, outputFolder);
 
-    // Inject context into task description for agent awareness.
-    // Context is prepended using XML-like tags that the agent prompt can reference.
+    // A script task runs its command: no context to inject; the folders it reads and writes
+    // reach it as environment variables (script-task.ts)
     const taskWithContext = { ...task };
-    const contextParts: string[] = [];
-
-    // 1. Shared memory (persistent cross-session knowledge, visible to all agents)
-    const sharedMemory = (await this.ctx.memoryStore?.get()) ?? "";
-    if (sharedMemory) {
-      contextParts.push(`<shared-memory>\n${sharedMemory}\n</shared-memory>`);
-    }
-
-    // 1b. Agent-specific memory (private knowledge for the assigned agent)
-    if (task.assignTo) {
-      const agentMem = (await this.ctx.memoryStore?.get(agentMemoryScope(task.assignTo))) ?? "";
-      if (agentMem) {
-        contextParts.push(`<agent-memory agent="${task.assignTo}">\n${agentMem}\n</agent-memory>`);
+    let script: RunnerConfig["script"];
+    if (scripted) {
+      const def = missionTaskScript(mission?.data, task.title);
+      if (!def) {
+        const message = `Script task "${task.title}" has no command in its mission document`;
+        this.ctx.emitter.emit("log", { level: "error", message: `[${task.id}] ${message}` });
+        await this.ctx.registry.updateTask(task.id, { result: { exitCode: 1, stdout: "", stderr: message, duration: 0 } }).catch(() => undefined);
+        await this.ctx.registry.transition(task.id, "failed");
+        return;
       }
-    }
-
-    // 2. Mission context — if this task belongs to a mission, include the mission goal and sibling tasks
-    if (task.group) {
-      try {
-        const missionParts: string[] = [];
-
-        // Original user prompt that generated this mission (the "why")
-        if (mission?.prompt) {
-          missionParts.push(`Mission goal: ${mission.prompt}`);
-        }
-
-        // Sibling tasks — just titles and statuses for awareness, not full descriptions
-        const allTasks = await this.ctx.registry.getAllTasks();
-        const siblings = allTasks.filter(t => t.group === task.group && t.id !== task.id);
-        if (siblings.length > 0) {
-          missionParts.push(`Other tasks in this mission:`);
-          for (const s of siblings) {
-            const marker = s.status === "done" ? "[done]"
-              : s.status === "in_progress" ? "[in progress]"
-              : s.status === "failed" ? "[failed]"
-              : "[pending]";
-            missionParts.push(`  ${marker} "${s.title}" → ${s.assignTo}`);
-          }
-        }
-
-        if (missionParts.length > 0) {
-          contextParts.push(`<mission-context>\n${missionParts.join("\n")}\n</mission-context>`);
-        }
-      } catch { /* best effort — mission may have been deleted */ }
-    }
-
-    // 3. Where the tasks this one depends on saved their files (each task has its own output folder)
-    const dependencyOutputs = await this.dependencyOutputs(task, mission?.data);
-    if (dependencyOutputs.block) contextParts.push(dependencyOutputs.block);
-
-    // 4. Its own output folder, with the path of each new file the description names
-    contextParts.push(await this.outputFolderBlock(task, outputFolder, dependencyOutputs.files));
-
-    if (contextParts.length > 0) {
-      taskWithContext.description = contextParts.join("\n\n") + "\n\n" + task.description;
+      const timeout = this.timeoutOf(task);
+      script = { command: def.command, env: await this.scriptEnv(task, mission, outputDir), ...(timeout > 0 ? { deadline: Date.now() + timeout } : {}) };
+    } else {
+      taskWithContext.description = await this.describeWithContext(task, mission, outputFolder);
     }
 
     // Sandbox: resolve the cascade instance → agent → mission → task here, where all levels are
@@ -730,6 +773,7 @@ export class TaskRunner {
       ...(volumes.length ? { volumes } : {}),
       whatsappDbPath,
       whatsappProfilePath,
+      ...(script ? { script } : {}),
     };
 
     try {
