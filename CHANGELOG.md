@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **An agent could overwrite the files of the tasks before it**: its file tools reached all of `output/` through the working directory grant, so an agent told to correct the drafts of a previous task wrote its corrections over them, and the originals were gone. In a task run, the output folders of the other tasks are now read-only: the agent reads them, but `write`, `edit` and the tools that save a file (Excel, Word, PDF, images, video, speech, downloads, email attachments, screenshots) refuse a path there and name the agent's own output folder, so it can write the file again in the right place. The agent's prompt says so too. The project's other files are writable as before; `bash` commands are not covered.
 
+### Security
+- **Task agents could read and write the project's `.polpo` folder.** The file tools keep agents out of `.polpo` (configuration, `.env`, vault, sessions, storage mounts), but the guard was only switched on in the server process. Tasks run in a separate runner process, where it was off: an agent with the default access (its working directory) could read `.polpo/.env` or the vault file and write anywhere in `.polpo`. The runner now sets the same guard before building the agent's tools, with the same exceptions (offloaded tool outputs, skills, playbooks). A task output folder that lies inside `.polpo` stays writable: it is now granted explicitly.
+
 ## [0.5.0] — 2026-10-25 — Artifacts and the MCP connector
 
 ### Added
