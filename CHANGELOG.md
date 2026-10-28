@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Checkpoints in the dashboard:** a mission paused at a checkpoint opens an approval request (Approvals page, sidebar badge, history, `/approve`). Approving it resumes the mission; rejecting it aborts the mission. The mission page shows the pause with an "Approve and continue" button. Resuming, aborting or deleting the mission closes the request. Before, a paused mission could be resumed only through the API.
 
 ### Fixed
+- **A checkpoint after a failure asked to approve as if the work were done**: a checkpoint is reached when the tasks before it have ended, failed ones included, and its approval said only "Checkpoint … · <run>", with "Done:" before those tasks. The approval now names the tasks of the run that failed, in its name too (so the Approvals page, the badge and the Telegram or other notifications show it: `Checkpoint "approve" · report (3) · failed in this run: Review`), and the Approvals page adds that approving resumes the mission without redoing them. "Done:" is now "After:" on the approval and on the paused-mission banner.
 - On every start the server logged `[checkpoint] approval sync failed`, and a mission paused at a checkpoint before a restart got no approval on the Approvals page: the sync ran before the orchestration engine it reads from was created. It now runs right after.
 
 ## [0.4.10] — 2026-10-15 — Fixes from DeltaPolpo

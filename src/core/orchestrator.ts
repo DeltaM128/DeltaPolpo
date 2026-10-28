@@ -2421,7 +2421,12 @@ export class Orchestrator extends TypedEmitter {
     return { ok: true, status: "pending" };
   }
 
-  /** Open the approval of a reached checkpoint, unless one is already pending. */
+  /**
+   * Open the approval of a reached checkpoint, unless one is already pending. A checkpoint is
+   * reached when the tasks before it have ended, failed ones included: the approval names the
+   * tasks of the run that failed (in its name too, so notifications show it), or approving it
+   * reads like approving finished work.
+   */
   private async openCheckpointApproval(
     group: string, checkpointName: string, missionId: string | undefined,
     message: string | undefined, afterTasks: string[], blocksTasks: string[],
@@ -2430,11 +2435,15 @@ export class Orchestrator extends TypedEmitter {
     if (!mgr) return;
     const gateId = checkpointGateId(group, checkpointName);
     if ((await mgr.getPending()).some((r) => r.gateId === gateId)) return;
+    const failedTasks = (await this.registry.getAllTasks())
+      .filter((t) => t.group === group && t.status === "failed")
+      .map((t) => t.title);
+    const failedNote = failedTasks.length > 0 ? ` · failed in this run: ${failedTasks.join(", ")}` : "";
     await mgr.requestHumanApproval({
       gateId,
-      gateName: `Checkpoint "${checkpointName}" · ${group}`,
+      gateName: `Checkpoint "${checkpointName}" · ${group}${failedNote}`,
       missionId,
-      payload: { kind: "checkpoint", group, checkpointName, message, afterTasks, blocksTasks },
+      payload: { kind: "checkpoint", group, checkpointName, message, afterTasks, blocksTasks, failedTasks },
     });
   }
 
