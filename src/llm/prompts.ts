@@ -4,7 +4,7 @@
 
 import type { Orchestrator } from "../core/orchestrator.js";
 import type { AgentConfig, PolpoState } from "../core/types.js";
-import { HOOK_EVENT_CATALOG, HOOK_EVENT_GLOBS } from "@polpo-ai/core";
+import { HOOK_EVENT_CATALOG, HOOK_EVENT_GLOBS, todayLine } from "@polpo-ai/core";
 import { discoverSkills, loadOrchestratorSkills, buildSkillPrompt, type SkillInfo } from "./skills.js";
 import { buildModelListingForPrompt, listModels, resolveModelSpec } from "./pi-client.js";
 import { readSystemContext } from "./orchestrator-tools.js";
@@ -32,7 +32,8 @@ function describeAgentCapabilities(agent: AgentConfig, skillPool?: SkillInfo[]):
   if (hasPattern("search_")) caps.push("search_web (Exa AI web search), search_find_similar (find similar pages)");
   if (hasPattern("whatsapp_")) caps.push("whatsapp_list, whatsapp_read (markRead=false reads hidden), whatsapp_send, whatsapp_send_file, whatsapp_search, whatsapp_contacts");
   if (hasPattern("phone_")) caps.push("phone_call, phone_get_call, phone_list_calls, phone_hangup, phone_setup_inbound, phone_get_inbound_config, phone_disable_inbound (VAPI)");
-  if (hasPattern("data_")) caps.push("scoped structured data discovery, query, read-only SQL, mutation, and native generated views");
+  if (hasPattern("data_")) caps.push("scoped structured data discovery, query, read-only SQL, and mutation");
+  if (hasPattern("artifact_")) caps.push("artifacts: artifact_create / artifact_update (documents, html dashboards and designs that read your data sources through the polpo bridge, svg, mermaid), artifact_get, artifact_list, artifact_delete");
   if (hasPattern("brain_")) caps.push("scoped Company Brain search, semantic context, evidence-aware enrichment, and knowledge graph maintenance");
   if (agent.skills?.length) {
     // Show skill names with descriptions when available from the pool
@@ -1078,9 +1079,10 @@ export async function buildChatSystemPrompt(
     `- Recurring on events: "every time a mission completes, notify ops" → add_notification_rule.`,
     `- Mission-scoped: "for this specific mission only, alert me on every checkpoint" → update_mission_notifications.`,
     `- Cron / time-based: "every Monday at 9am send the weekly digest" → create_schedule.`,
-    `- Recurring check in this chat: "every 2 minutes check whether the site answers and tell us if it goes down"`,
-    `  → schedule_check. It reports in the chat it was asked in (a Telegram group or topic too) and stays silent`,
-    `  when there is nothing to report; send_notification and schedules only reach the configured channels.`,
+    `- Messages and reminders to any chat (a Telegram group, topic or person), from wherever you are asked:`,
+    `  now → send_message; later or recurring → schedule_check with to (and every_minutes, cron + timezone, at or`,
+    `  in_minutes; message for a fixed reminder, instructions for work to do at each run). list_chats lists the chats`,
+    `  and their ids. Checks with instructions stay silent when there is nothing to report.`,
     `  Never promise to notify later without one of these tools: nothing happens after this turn.`,
     `- Automation chain with NO message: "when quality:gate:failed, auto-create a fix task" →`,
     `  add_notification_rule with channels:[] + actions:[{type:"create_task", ...}].`,
@@ -1089,7 +1091,8 @@ export async function buildChatSystemPrompt(
     `**Reminders**: When the user asks "remind me in X minutes to do Y", use send_notification`,
     `with delayMs. Example: "remind me in 5 minutes" → send_notification with delayMs=300000,`,
     `title="Reminder", body="<what the user asked>". Always confirm the reminder was set.`,
-    `For recurring reminders in this chat or group, use schedule_check; create_schedule runs missions.`,
+    `For reminders in a chat or group (once or recurring, "every Monday at 9 remind the team group"), use`,
+    `schedule_check with to and message; create_schedule runs missions.`,
     ``,
     `**Task waiting and watchers**: wait_for_task, watch_task, list_watchers, remove_watcher.`,
     `wait_for_task blocks the current tool call until the task reaches targetStatus, or done/failed`,
@@ -1293,14 +1296,25 @@ export async function buildChatSystemPrompt(
     `data_test_source, and data_set_source_grant. Credentials must be passed only through the credentials argument,`,
     `which stores them in Vault. Grant least privilege and never remove or broaden access without an explicit reason.`,
     ``,
-    `When a visual, interactive screen is more useful than prose, use data_create_view instead of render_widget.`,
-    `Build source-query bindings for live data, inline bindings for bounded temporary results, or combine both.`,
-    `Compose native metric, table, record, list, progress, gauge, sparkline, comparison, ranking, bar, line, area,`,
-    `pie, donut, scatter, radar, heatmap, funnel, histogram, treemap, timeline, status, or markdown widgets.`,
-    `Widgets reference bindings by ID. Prefer inline data for one-off calculations that do not belong in a source;`,
-    `keep it below 500 rows / 512 KB. Use persistence="ephemeral" for a one-off answer,`,
-    `"saved" for a reusable view, and "pinned" only when the user wants it kept prominent. After creating a view,`,
-    `navigate_to({ target: "view", id: "<returned id>" }) so the user sees it in the separate Views workspace.`,
+    `For a screen people keep and come back to, make an **artifact** (see "Artifacts" below), not a data view.`,
+    `Data views (data_create_view, the former Views) are deprecated: they still render, but make an html`,
+    `dashboard artifact that reads the sources through the polpo bridge instead.`,
+    ``,
+    `### Artifacts`,
+    ``,
+    `An artifact is something people keep and open in the Artifacts section (and from this chat): artifact_create.`,
+    `- **doc**: a Markdown document (a plan, a report, a brief, meeting notes, a spec).`,
+    `- **html** with kind **dashboard** (live data), **design** (a mockup or visual), **app** (a small tool), **report**, **page**:`,
+    `  one self-contained HTML page. It runs isolated with no network; it reads the instance's data sources through`,
+    `  the \`polpo\` bridge (polpo.sources(), polpo.describe(id), polpo.query({...}), polpo.sql(id, "select…"), polpo.onRefresh(fn)),`,
+    `  with the rights of its author. Charts and libraries may come from cdnjs, jsdelivr or unpkg (e.g. Chart.js, D3).`,
+    `  For a dashboard: discover the sources first (data_list_sources, data_describe), list them in sources, set`,
+    `  refreshSeconds when it should stay live, and load the data in polpo.onRefresh so it reloads.`,
+    `  Make it look finished: a clear layout, readable on a phone, light and dark themes (polpo.theme / <html data-theme>).`,
+    `- **svg**: a drawing or an illustration. **mermaid**: a diagram (flow, sequence, ER, Gantt…).`,
+    `Change an artifact with artifact_update (edits for small changes, content to rewrite it); every change keeps the`,
+    `previous version, so people can go back. After creating one, navigate_to({ target: "artifact", id }) so the person sees it.`,
+    `Use render_widget only for a small, throwaway visual inside the chat (no data sources, not kept).`,
     ``,
     `### Sandbox and storage`,
     ``,
@@ -1426,7 +1440,7 @@ export async function buildChatSystemPrompt(
     `  - set_design({ enabled: true, light: { primary: "#7c3aed", secondary: "#f4f4f5", text: "#18181b", radius: 12, fontFamily: '"Inter", ui-sans-serif, system-ui, sans-serif' }, dark: { primary: "#a78bfa", secondary: "#27272a", text: "#fafafa", radius: 12, fontFamily: '"Inter", ui-sans-serif, system-ui, sans-serif' } })`,
     `  - set_design({ enabled: false })`,
     ``,
-    `### When to render a widget`,
+    `### When to render a widget (small, throwaway, in the chat)`,
     ``,
     `**Tool**: render_widget`,
     `Render an interactive HTML widget inline as a card in the user's chat. The HTML runs inside a`,
@@ -1451,7 +1465,8 @@ export async function buildChatSystemPrompt(
     ``,
     `Concrete YES examples:`,
     `- "show me a sine wave animation" → render_widget with an SVG + requestAnimationFrame.`,
-    `- "interactive bar chart of last week's revenue" → render_widget with inline data + SVG bars.`,
+    `- "a quick bar chart of these five numbers" → render_widget with inline data + SVG bars.`,
+    `- A dashboard on real data, a document, a design, anything to keep → an artifact (artifact_create), not a widget.`,
     `- "calculator: monthly payment given rate and principal" → render_widget with sliders + live total.`,
     ``,
     `Concrete NO examples:`,
@@ -1486,8 +1501,8 @@ export async function buildChatSystemPrompt(
     `  animations whose first keyframes are themselves interesting). For small or instant`,
     `  widgets leave \`stream\` off — atomic is faster, smoother, and cheaper.`,
     ``,
-    `After render_widget fires, the turn ends — the widget is shown to the user as an interactive card.`,
-    `Continue with prose only if there's something genuinely useful to add beyond what the widget shows.`,
+    `The widget is shown to the user as an interactive card in the chat; continue with prose only if there's`,
+    `something genuinely useful to add beyond what the widget shows.`,
     ``,
     `**Proactive navigation**: When you CREATE something new (mission, agent, task, skill, etc.),`,
     `navigate the user to it right after. This is a natural UX — you just made it, show it.`,
@@ -1879,8 +1894,20 @@ export async function buildChatSystemPrompt(
     `  ({ learning: { enabled, everyMessages?, idleMinutes?, skills? } }); the agent can also do it itself (set_learning).`,
     `  "What did X learn?" → get_agent_learning; "have X learn now" → review_agent_learning; "undo that" →`,
     `  revert_agent_learning with the change id.`,
-    `- **Recurring checks**: agents have schedule_check too; reports go to the chat or group they were asked in.`,
+    `- **Messages and schedules anywhere**: agents have send_message, list_chats and schedule_check too, with the same`,
+    `  freedom: any group, topic or person the bots have met, once, every N minutes or on a cron, whoever asks and from`,
+    `  wherever. If their own bot is not in that chat another bot of the instance sends it.`,
     `- **Voice replies**: update_agent voiceReplies, or set_voice_replies (theirs or yours).`,
+    `- **Drive** (off by default): an agent with a drive pursues a purpose on its own initiative, among people. It reflects`,
+    `  on its chats and groups (also what it only read) every so often and daily, keeps a self-portrait (its personality,`,
+    `  the people who matter, open threads), and decides by itself when to write, to whom, or what to plan for later`,
+    `  (intentions: scheduled checks with a why), following human customs (birthdays, wishes, check-ins, tact, timing).`,
+    `  It also works on itself like a person with goals: it breaks its purpose into long-term, quarter, month, week and day`,
+    `  goals with measures and steps (its plan), reviews them daily (at dayStartsAt) and weekly, monthly, quarterly, studies`,
+    `  what it lacks and writes its own skills.`,
+    `  Set it with update_agent ({ drive: { enabled, purpose, goals?, autonomy?: "propose" | "balanced" | "act",`,
+    `  reflectEveryMinutes?, dayStartsAt? } }). "What is X up to / what does it plan?" → get_agent_drive; "have X think about it now" →`,
+    `  reflect_agent; proposed intentions wait for a yes → confirm_check or cancel_check.`,
     `- **Reactions**: on Telegram an answer that is a single emoji becomes a reaction on the message.`,
   );
 
@@ -1930,6 +1957,8 @@ export async function buildChatSystemPrompt(
     parts.push(``, skillBlock);
   }
 
+  // last: it changes once a day
+  parts.push(``, todayLine());
   return parts.join("\n");
 }
 

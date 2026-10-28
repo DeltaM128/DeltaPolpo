@@ -51,12 +51,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A task whose model call failed (e.g. Ollama answering HTTP 500 because the model crashed while loading, or a connection error) ended as **done** with no output and no work: the agent ends such a run with an error reply instead of throwing, and the engine counted it as a success. It now fails with the reason (`Model error: …`), so it is retried and then shown as failed.
 - On every start the server logged `[checkpoint] approval sync failed`, and a mission paused at a checkpoint before a restart got no approval on the Approvals page: the sync ran before the orchestration engine it reads from was created. It now runs right after.
 - Tool calls whose arguments did not match the tool's schema were run or previewed anyway: e.g. a local model putting the mission name inside `data` produced a mission preview without a name. The chat now checks every call against its schema (pi-ai's validator) before running or previewing it; a call that does not match is returned to the model with the reason, so it can call the tool again in the same turn. An object or array parameter passed as a JSON string is still accepted, as before.
-- A delay with a duration the parser could not read (e.g. `PT1s`, lowercase) made every supervisor tick fail, so no task of any mission started anymore. Durations are now read case-insensitively, a mission or playbook with an invalid duration is refused with a clear message, the playbook editor flags it, and a stored delay that still cannot be read is reported once and ignored instead of stopping the supervisor.
-- The model list of the Add agent dialog was empty in the desktop app: the model picker called the API with a relative path, which does not reach the server from a page loaded from `file://`.
 - `ui/server.mjs` did not work on Windows: every file, including the JavaScript and CSS in `/assets`, was served as `index.html`, because the path check expected `/` separators, and the default static root was built from a URL path (`/D:/...`). The server now uses the platform's paths and still refuses paths outside the static root.
 
 ### Security
 - **Task agents could read and write the project's `.polpo` folder.** The file tools keep agents out of `.polpo` (configuration, `.env`, vault, sessions, storage mounts), but the guard was only switched on in the server process. Tasks run in a separate runner process, where it was off: an agent with the default access (its working directory) could read `.polpo/.env` or the vault file and write anywhere in `.polpo`. The runner now sets the same guard before building the agent's tools, with the same exceptions (offloaded tool outputs, skills, playbooks). A task output folder that lies inside `.polpo` stays writable: it is now granted explicitly.
+
+## [0.5.0] — 2026-10-25 — Artifacts and the MCP connector
+
+### Added
+- **Artifacts** replace Views: one concept for what agents and people make to look at and keep.
+  - **Types:**
+    - `doc` (Markdown);
+    - `html`, one self-contained page with a kind: dashboard, design, app, report, page;
+    - `svg` (a drawing) and `mermaid` (a diagram);
+    - `view`, the former data views, still shown and working.
+  - **Data in html artifacts:** the page runs isolated, in a sandbox without same-origin and with a strict CSP: no network except a few CDNs for libraries. It reads the instance's data sources through a `polpo` bridge with the **rights of its author**: an agent's artifact sees only the sources and fields that agent is granted. The bridge offers:
+    - `polpo.sources()`, `polpo.describe(id)`, `polpo.query({...})` and `polpo.sql(id, …)` (read-only);
+    - `polpo.onRefresh(fn)`, called every `refreshSeconds` and when a data source changes;
+    - `polpo.theme` / `polpo.onTheme`.
+  - **Versions:** every change keeps the previous content with its author and note, and any version can be restored.
+  - **Tools:** `artifact_create`, `artifact_update` (whole content, or find/replace edits), `artifact_get` (also earlier versions), `artifact_list`, `artifact_delete`.
+    - Polpo has all of them; agents get them with `artifact_*` in allowedTools (a new "Artifacts" category in the Tools tab).
+    - Agents change only their own artifacts.
+    - `navigate_to` gains `artifacts` / `artifact`.
+  - **API:** `GET/POST /artifacts`, `GET/PATCH/DELETE /artifacts/:id`, `POST /artifacts/:id/restore/:version`, `POST /artifacts/:id/data` (the bridge). The event is `artifact:changed`. Storage is the `artifacts` table (SQLite/Postgres migrations) or `.polpo/artifacts/` in file mode.
+  - **UI:**
+    - an **Artifacts** section (replacing Views in every menu) with a gallery by type and search;
+    - a viewer with live content, versions and restore, source, data reload, full screen and download;
+    - in the chat, a card for each artifact made or changed, which opens it next to the conversation.
+
+- **Polpo as an MCP connector:** every server is also an MCP server at `/mcp` (Streamable HTTP, stateless), so Claude Code, Codex, Claude Desktop, Cursor and other MCP clients can use the instance.
+  - **Tools:** 22 tools for what people do (`ask_polpo` delegates anything to Polpo; `chat_with_agent`; tasks, missions, artifacts, data, approvals; files: `list_files`, `search_files`, `read_file` with text by line ranges and images and PDFs as they are, `write_file`, `manage_file` to make folders, rename and delete) plus `list_operations` / `call_operation`, which reach every REST operation of the server (more than 300). There is not one tool per endpoint, to keep the model's context small. Read-only and destructive tools (`call_operation`, `resolve_approval`, `write_file`, `manage_file`) are annotated.
+  - **Authentication:** the API key as `Authorization: Bearer` or `X-API-Key`, or **OAuth 2.1**, so it can be added as a custom connector in Claude (web, Desktop, mobile) and ChatGPT.
+    - **Discovery:** a `401` with the protected-resource pointer, then RFC 9728 and RFC 8414 metadata.
+    - **Client registration:** Client ID Metadata Documents or Dynamic Client Registration.
+    - **Codes:** authorization code with PKCE S256 only, `iss` in the response, loopback redirects on any port for Claude Code.
+    - **Consent page:** signed in to the dashboard, or with the API key or MCP key; it has a session-bound CSRF token.
+    - **Tokens:** 1-hour access tokens and 30-day refresh tokens rotated at every use, stored hashed in `.polpo/oauth.json`; `/oauth/revoke`.
+    - **Public URL:** the `X-Forwarded-*` headers when behind a proxy, or `POLPO_PUBLIC_URL`, which may carry a path (a proxy that mounts Polpo under `/name`) and applies to requests through its host.
+  - **Publishing only the connector:** `POLPO_MCP_KEY` opens `/mcp` and the consent page without putting an API key on the dashboard and REST API, so an instance can expose `/mcp`, `/oauth` and the discovery documents (for example with Tailscale Funnel) and keep the rest private. Since these endpoints can be public, open client registration is capped (200 clients; ones holding tokens are kept), and client metadata documents are fetched only from public addresses.
+  - **Same rules:** the tools call the server's own REST API in process.
+  - **stdio:** `polpo mcp --url <server> --api-key <key>` runs the same tools over stdio for clients that start a process.
+  - **Setup guide:** `docs/mcp.md`.
+- The API key middleware also accepts `Authorization: Bearer <key>`, not only `X-API-Key`.
+
+### Changed
+- Polpo's prompt now says when to make an artifact (documents, dashboards on real data, designs, diagrams) and keeps `render_widget` for small throwaway visuals in the chat. The old prompts contradicted each other on views vs widgets.
+- `data_create_view` / `data_update_view` are deprecated in favor of html dashboards. `/views` redirects to the artifacts of type view.
+- In the Artifacts section the former data views are marked **Legacy**: they have no tab of their own and a note says to make html dashboards instead.
+
+### Fixed
+- A data view shown in the dashboard queried its sources as an administrator, so an agent's view could show data that agent is not granted. As an artifact, a view's data bridge uses its author's rights.
+
+## [0.4.10] — 2026-10-15 — Fixes from DeltaPolpo
+
+Most of these were found and fixed by @DeltaM128 in the DeltaPolpo fork (#127; #133–#137, #144, #145). Thanks!
+
+### Added
+- **Local (offline) models in setup:** the provider step has a "Local model (offline)" option for Ollama, LM Studio, vLLM or any OpenAI-compatible server on this machine or the local network. Polpo detects the server and its models, and flags Ollama models without tool calling, which can chat but cannot run agent tasks. No account or API key is needed.
+
+### Changed
+- A new mission whose name is taken is named `name (2)`, `name (3)`…, so every run of a playbook is its own mission.
+- Task titles must be unique within a mission, no longer across all active tasks, so two runs of one playbook can run at the same time.
+- Abort also cancels a mission paused at a checkpoint, and releases its checkpoints and delays.
+
+### Fixed
+- **Telegram voice notes in private chats are transcribed on arrival**, as in groups, and their words become the message.
+  - **Why:** before, the model got an audio file it cannot hear and had to transcribe it with its tools. Polpo has no speech-to-text key of its own, so it delegated the transcription to an agent as a task. The transcript then lived only in a tool result, so the next message no longer knew what the voice note said ("I don't have the content of the voice message").
+  - **Which key:** the agent's own speech-to-text key (vault, then environment). Polpo uses the environment, else the first agent's key.
+  - **Without a key:** the audio stays attached, as before.
+- Task runs ignored the custom providers of `polpo.json` (local model servers such as Ollama or LM Studio, gateways): their models worked in chat, but tasks failed with "Model not found". The task runner now registers them, with their secrets from the vault.
+- Playbooks could not be run from the dashboard: the run dialog existed but no button opened it. Playbook cards and the playbook page now have a Run button.
+- Playbooks with checkpoints, delays or quality gates could be saved but not run: the blocked tasks lacked the `dependsOn` the mission schema requires, and the run answered a plain-text 500 ("Unexpected token 'I'… is not valid JSON" in the dashboard). The dependencies are now added when the playbook runs, and a run that cannot start answers a JSON 400 and leaves no mission behind.
+- `GET /missions/checkpoints` and `GET /missions/delays` answered "Mission not found": `GET /missions/:missionId` was registered first and took them.
+- A mission paused at a checkpoint lost its pause on restart, and the blocked task was then force-failed as a deadlock: with file storage, checkpoint and delay state was kept in memory only. It is now saved in `.polpo/`, a paused mission is never treated as a deadlock, and missions paused before the fix get their checkpoint back.
+- Running a playbook a second time created a mission with the same name, which is its task group: the new run saw the first run's finished tasks (its checkpoint was reached at once) and was never marked completed. With SQLite storage the second run failed instead.
+- With two missions that have tasks with the same titles in progress (e.g. two runs of one playbook), a checkpoint, delay or quality gate could be skipped: they looked for their tasks by title across all missions. They now look only at their own mission's tasks.
+- Missions that share a name never completed, and Abort and Resume had no effect on them: completion, abort and the mission page went by the shared group and always found the first mission. They now work per mission, and missions left active with all their tasks finished are completed on the next start. Deleting one of them no longer deletes the other missions' tasks.
+- The mission page refreshed the mission only on the first change of a run: nothing cleared the "missions stale" flag when the missions list was not mounted. Checkpoint events now also update the mission status (paused / active), and an abort refreshes it.
+- The Approvals page went blank (counters back to 0) at every refresh: `useApprovals` showed the loading state on every refetch. It now does so only on the first load.
+- The agents list kept a stale ETag after an agent's configuration changed, so browsers kept showing the old agents. The ETag now depends on the content.
+- A delay whose duration the parser could not read (e.g. `PT1s`, lowercase) made every supervisor tick fail, so no task of any mission started anymore. Durations are now read case-insensitively, a mission or playbook with an invalid duration is refused with a clear message, and a stored delay that still cannot be read is reported once and ignored instead of stopping the supervisor.
+- **Desktop app:** the model list of the Add agent dialog was empty: the model picker asked for the models with a relative path, which does not reach the server from a page loaded from `file://`. It now uses the configured server address and API key.
+
+## [0.4.9] — 2026-10-14 — Routine
+
+### Added
+- **Drive: a routine of its own.** An agent with a drive keeps a routine: the recurring moments its purpose, responsibilities, goals and tasks need (a morning check-in, an end-of-day review, a weekly plan), as recurring checks with a `why`.
+  - It sets the routine up at its first reflection, keeping the checks it already has.
+  - It reviews the routine at the weekly review and whenever its goals or tasks change.
+  - Its chats show the routine apart from what is planned once.
+- **Drive: its Polpo tasks.** Reflections now see the agent's open Polpo tasks (assigned to it), so its plan and routine follow its work.
+- **UI:** recurring intentions are marked "Routine" in the Goals tab.
+
+### Fixed
+- Replies of tool-using turns (channels, check runs, reflections) glued the text of each step together ("Now the plan.Now today's…"). Each step's text is now its own paragraph.
+
+## [0.4.8] — 2026-10-13 — Drive
+
+### Added
+- **Agent drive** (`drive` in the agent config, off by default): an agent pursues a purpose and goals on its own initiative, among people, instead of only answering when called or scheduled.
+  - **Reflection:** it reflects on its private chats and on the groups it is in, including messages it only read. It reflects after `reflectEveryMinutes` (default 120) when something new happened, and once a day in any case. It decides by itself whether to write now (`send_message`), plan something for later, or do nothing, weighing how much it serves its purpose, how serious and how urgent it is.
+  - **Intentions:** while it talks or reflects, it plans follow-ups on its own, such as wishes on someone's birthday or a check-in after an event. An intention is a scheduled check with a `why`.
+  - **Autonomy:** with `propose`, its own initiatives wait for a yes; with `balanced` (the default), it acts on low-stakes things and asks first otherwise; with `act`, it uses its own judgment. Proposed checks are approved with `confirm_check`, by Polpo, or in the UI.
+  - **Self-portrait:** it keeps a self-portrait covering its personality, the people who matter and its open threads, updated with `update_self` and part of every conversation. It starts from the identity's personality, or writes one coherent with its purpose.
+  - **Human customs:** its prompt covers birthdays and holidays, tact in groups vs private, choosing the moment, not nagging, and stopping when asked.
+  - **Goals in a cascade:** it breaks its purpose down into long-term (6–12 months), quarter, month, week and day goals, each under the one it serves, with a measure, progress, an owner (its own, or a person's or group's it supports) and the steps to do. It keeps them in its plan with `add_plan_item` / `update_plan_item`, and the plan is part of every chat.
+  - **Review rhythm:** when its day starts (`dayStartsAt`, default 07:30 in its timezone) it plans the day. On a new week, month or quarter it also does that review: score, adjust, set the next goals, and check in with the people it supports.
+  - **Method:** the guidance follows goal-setting research:
+    - specific, measurable goals, at most 3–5 per horizon;
+    - if-then plans for key actions;
+    - important before urgent, with timeboxed work sessions;
+    - progress monitoring;
+    - autonomy-supportive help for people's goals (ask, offer options, never shame);
+    - for groups, shared goals with regular check-ins.
+  - **Growing:** it asks what it could do more or better and what it lacks, studies it with its tools, and writes its own skills. With a drive it always has its own-skill tools (`list_my_skills`, `create_my_skill`, `update_my_skill`), which can be undone in the Learning tab.
+  - **Polpo:** `add_agent` / `update_agent` take `drive`; `get_agent_drive` shows the purpose, self-portrait, intentions and reflections; `reflect_agent` makes the agent reflect now.
+  - **API:** `GET /drive/:agent`, `PUT /drive/:agent/self`, `POST /drive/:agent/reflect`, `POST /drive/:agent/intentions/:id/confirm|cancel`; the event is `agent:reflected`.
+  - **UI:** a **Goals** tab in the agent page with purpose, goals, autonomy, day start, self-portrait (editable), the goals and steps tree (mark done or drop), planned and proposed intentions (approve or reject), and the reflections journal.
+  - **API:** `PATCH /drive/:agent/plan/:id`.
+- Scheduled checks gained a `proposed` state (waiting for a yes) and a `why`.
+
+### Fixed
+- **Desktop app:** no task ever ran. The compiled server started task runners with a script path that does not exist inside the binary ("too many arguments. Expected 0 arguments but got 3"); it now starts them with a hidden `__runner` command.
+- **Desktop app:** "Login with subscription" failed for every provider ("Cannot find module './anthropic.js'"). The OAuth flows are now registered statically, and provider login pages open in the default browser instead of a bare Electron window.
+- After a setup completed from the dashboard, tasks stayed pending until the server was restarted: the supervisor loop never started.
+- After a setup completed from the dashboard, the dashboard received no live events until the server was restarted: the `/events` route kept the event bridge that setup had replaced.
+- Thanks to @DeltaM128 for finding and fixing these four (#128).
+
+## [0.4.7] — 2026-10-13 — Anywhere
+
+### Added
+- Agents and Polpo can now send messages to any chat, from wherever they are asked (web chat, private chat or a group).
+  - **`send_message`:** sends now to any Telegram group, topic or person the bots have met, by name or id.
+  - **`list_chats`:** lists those chats, their ids and the current time.
+  - **Bot fallback:** if the agent's own bot is not in that chat, another bot of the instance sends the message.
+  - **Transcripts:** a message to a group is saved in that group's transcript.
+- `schedule_check` can now:
+  - send to any chat (`to`, `topic`);
+  - run once (`at`, `in_minutes`) or on a cron with a timezone (`cron`, `timezone`, default the agent's identity timezone), besides `every_minutes`;
+  - send a fixed `message` without running the agent, for reminders.
+- `list_checks all=true` lists an agent's checks from every chat, and every check of the instance for Polpo. Polpo can cancel any check.
+- Agents' chat instructions and Polpo's prompt explain all of the above and include today's date, so "tomorrow at 9" resolves correctly.
+
+### Changed
+- Telegram `sendMarkdown` now reports whether Telegram accepted the message.
 
 ## [0.4.6-delta.1] — 2026-10-13 — DeltaPolpo
 

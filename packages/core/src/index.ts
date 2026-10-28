@@ -216,10 +216,20 @@ export type {
   StorageRegistryChangeEvent, StorageRegistryChangeEmitter, StorageRegistryStore, StorageCredentials,
   StorageCredentialStatus, StorageAccessGrant, StorageVolumeSettings,
 } from "./storage-registry.js";
-export { CHECK_NOTHING_TO_REPORT, MIN_CHECK_INTERVAL_MINUTES, afterCheckRun } from "./conversation-checks.js";
+export { CHECK_NOTHING_TO_REPORT, MIN_CHECK_INTERVAL_MINUTES, afterCheckRun, todayLine } from "./conversation-checks.js";
 export type {
   ConversationCheck, ConversationCheckState, ConversationCheckStore, ConversationCheckTarget, NewConversationCheck,
 } from "./conversation-checks.js";
 
 export { isVaultRef, normalizeVaultRef, describeVaultRef, resolveVaultRef, pickCredential, CREDENTIAL_NAMES } from "./vault-ref.js";
 export type { VaultRef } from "./vault-ref.js";
+
+// Artifacts: documents, dashboards, designs, diagrams
+export {
+  ARTIFACT_TYPES, ARTIFACT_KINDS, MAX_ARTIFACT_BYTES, MAX_ARTIFACT_VERSIONS,
+  isArtifactType, artifactContentProblem, summarizeArtifact, matchesArtifactFilter,
+  applyArtifactPatch, buildArtifact, applyArtifactEdits,
+} from "./artifacts.js";
+export type {
+  Artifact, ArtifactType, ArtifactVersion, ArtifactSummary, NewArtifact, ArtifactPatch, ArtifactFilter, ArtifactStore,
+} from "./artifacts.js";

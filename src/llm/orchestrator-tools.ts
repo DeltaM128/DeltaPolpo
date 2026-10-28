@@ -53,6 +53,8 @@ import { discoverAppPreviewTargets } from "../server/routes/app-preview.js";
 import { captureAppScreenshot, removeAppScreenshot, verifyAppDomain } from "../server/routes/apps.js";
 import { getAppRegistryRuntime } from "../server/app-runtime-manager.js";
 import { DATA_ORCHESTRATOR_TOOLS, executeDataTool } from "../tools/data-tools.js";
+import { ARTIFACT_TOOLS, executeArtifactTool } from "../tools/artifact-tools.js";
+import { getArtifactStore } from "../server/artifact-runtime.js";
 import { BRAIN_ORCHESTRATOR_TOOLS, executeCompanyBrainTool } from "../tools/company-brain-tools.js";
 import { STORAGE_ORCHESTRATOR_TOOLS, executeStorageTool } from "../tools/storage-tools.js";
 import { normalizeSandboxSettings, type EffectiveSandbox } from "@polpo-ai/core/sandbox";
@@ -62,6 +64,8 @@ import { VOICE_REPLY_MODES, isVoiceReplyMode } from "../tools/voice-reply-tools.
 import {
   CANCEL_CHECK_DESCRIPTION, CancelCheckSchema, LIST_CHECKS_DESCRIPTION, ListChecksSchema, SCHEDULE_CHECK_DESCRIPTION, ScheduleCheckSchema,
   execCancelCheck, execListChecks, execScheduleCheck,
+  CONFIRM_CHECK_DESCRIPTION, ConfirmCheckSchema, execConfirmCheck,
+  LIST_CHATS_DESCRIPTION, ListChatsSchema, SEND_MESSAGE_DESCRIPTION, SendMessageSchema, execListChats, execSendMessage,
 } from "../tools/conversation-check-tools.js";
 
 export interface OrchestratorToolProgress {
@@ -835,6 +839,71 @@ async function execAgentLearning(polpo: Orchestrator, toolName: string, args: Re
   }
 }
 
+// ═══════════════════════════════════════════════════════
+//  AGENT DRIVE (2): a purpose agents pursue on their own initiative
+// ═══════════════════════════════════════════════════════
+
+/** Agent drive, as add_agent / update_agent take it. */
+const agentDriveParam = Type.Optional(Type.Object({
+  enabled: Type.Boolean({ description: "Pursue its purpose on its own initiative: reflect on its chats and groups, write and plan without being asked, keep a self-portrait" }),
+  purpose: Type.Optional(Type.String({ description: "What it lives for, e.g. \"be Alessio's health coach\"" })),
+  goals: Type.Optional(Type.Array(Type.String(), { description: "Concrete goals in service of the purpose" })),
+  autonomy: Type.Optional(Type.Union([Type.Literal("propose"), Type.Literal("balanced"), Type.Literal("act")], {
+    description: "propose: its own initiatives wait for a yes; balanced (default): acts on low-stakes, asks first otherwise; act: its own judgment",
+  })),
+  reflectEveryMinutes: Type.Optional(Type.Number({ minimum: 15, description: "Minutes between reflections when something new happened (default 120; also once a day)" })),
+  dayStartsAt: Type.Optional(Type.String({ description: "When its day starts, \"HH:MM\" in its timezone: daily planning and the weekly/monthly/quarterly reviews (default 07:30)" })),
+}, { description: "Drive (purpose and goals it pursues on its own): off by default. Omit to keep current." }));
+
+const getAgentDriveTool: Tool = {
+  name: "get_agent_drive",
+  description: "An agent's drive: purpose, goals, autonomy, its self-portrait, its plan (goals by horizon and steps, with progress), its intentions (planned or proposed, with ids for confirm_check / cancel_check) and its latest reflections (what it decided and why).",
+  parameters: Type.Object({
+    agent: Type.String({ description: "Agent name" }),
+    limit: Type.Optional(Type.Number({ description: "Reflections to show (default 5)" })),
+  }),
+};
+const reflectAgentTool: Tool = {
+  name: "reflect_agent",
+  description: "Have an agent with a drive reflect now on what happened in its chats and groups, and act or plan as it sees fit. Returns its decision.",
+  parameters: Type.Object({ agent: Type.String({ description: "Agent name" }) }),
+};
+
+async function execAgentDrive(polpo: Orchestrator, toolName: string, args: Record<string, unknown>): Promise<string> {
+  const name = String(args.agent ?? "");
+  const agent = resolveAgent(await polpo.getAgents(), name);
+  if (!agent) return `Error: no agent "${name}"`;
+  const manager = polpo.getDriveManager();
+  if (!manager) return "Error: drives are not available on this instance";
+  const d = agent.drive;
+  if (toolName === "reflect_agent") {
+    if (!d?.enabled) return `Error: ${agent.name} has no drive; turn it on with update_agent (drive.enabled, purpose)`;
+    const entry = await manager.reflect(agent.name, "manual");
+    if (!entry) return `${agent.name} is already reflecting, or could not reflect now.`;
+    return `${agent.name} reflected (${entry.messages} new message(s)): ${entry.summary}${entry.actions.length ? `\nDid: ${entry.actions.join("; ")}` : ""}`;
+  }
+  const lines = [
+    `Drive of ${agent.name}: ${d?.enabled ? "on" : "off"}${d?.purpose ? `. Purpose: ${d.purpose}` : ""}`,
+    ...(d?.goals?.length ? [`Goals: ${d.goals.join("; ")}`] : []),
+    `Autonomy: ${d?.autonomy ?? "balanced"}; reflects every ${d?.reflectEveryMinutes ?? 120} min when something happens, and every day at ${d?.dayStartsAt ?? "07:30"} (with weekly, monthly and quarterly reviews).`,
+    "",
+    "Self-portrait:",
+    manager.getSelf(agent.name) || "(not written yet)",
+  ];
+  const { describePlanTree } = await import("../core/drive.js");
+  const plan = manager.listPlan(agent.name).filter((i) => i.status === "todo" || i.status === "doing");
+  lines.push("", plan.length ? "Plan (open goals and steps):" : "No plan yet.", ...describePlanTree(plan, 40));
+  const intentions = await manager.intentions(agent.name);
+  lines.push("", intentions.length ? "Intentions:" : "No intentions.");
+  for (const c of intentions.slice(0, 20)) {
+    lines.push(`- ${c.id}${c.state === "proposed" ? " [proposed]" : ""} next ${c.nextRunAt.slice(0, 16).replace("T", " ")}Z → ${c.target?.name ?? c.target?.chatId ?? "its chat"}: ${(c.message ?? c.prompt).slice(0, 120)}${c.why ? ` (why: ${c.why.slice(0, 120)})` : ""}`);
+  }
+  const journal = manager.listJournal(agent.name, Math.min(Math.max(Number(args.limit) || 5, 1), 30));
+  lines.push("", journal.length ? "Latest reflections:" : "No reflections yet.");
+  for (const e of journal) lines.push(`- ${e.at.slice(0, 16).replace("T", " ")} (${e.trigger}, ${e.messages} msg): ${e.summary.slice(0, 300)}${e.actions.length ? ` — did: ${e.actions.join("; ").slice(0, 300)}` : ""}`);
+  return lines.join("\n");
+}
+
 const addAgentTool: Tool = {
   name: "add_agent",
   description: "Add a new agent to a team. If no team is specified, adds to the default (first) team. Use allowedTools to grant extended tool access (e.g. ['browser_*', 'email_*', 'image_*', 'video_*', 'audio_*', 'excel_*', 'pdf_*', 'docx_*', 'whatsapp_*', 'phone_*']). phone_* grants the agent the VAPI phone tools and requires VAPI credentials in that agent's vault or environment. Core tools (including vault_get/vault_list) are always available. Use allowedTools to restrict to specific tool names.",
@@ -860,6 +929,7 @@ const addAgentTool: Tool = {
     emailAllowedDomains: Type.Optional(Type.Array(Type.String(), { description: "Restrict email sending to these domains only (e.g. ['company.com'])" })),
     learning: agentLearningParam,
     voiceReplies: agentVoiceRepliesParam,
+    drive: agentDriveParam,
   }),
 };
 
@@ -923,6 +993,7 @@ const updateAgentTool: Tool = {
     sandbox: agentSandboxParam,
     learning: agentLearningParam,
     voiceReplies: agentVoiceRepliesParam,
+    drive: agentDriveParam,
   }),
 };
 
@@ -1146,6 +1217,9 @@ async function execSetVoiceReplies(polpo: Orchestrator, args: Record<string, unk
 const scheduleCheckTool: Tool = { name: "schedule_check", description: SCHEDULE_CHECK_DESCRIPTION, parameters: ScheduleCheckSchema };
 const listChecksTool: Tool = { name: "list_checks", description: LIST_CHECKS_DESCRIPTION, parameters: ListChecksSchema };
 const cancelCheckTool: Tool = { name: "cancel_check", description: CANCEL_CHECK_DESCRIPTION, parameters: CancelCheckSchema };
+const confirmCheckTool: Tool = { name: "confirm_check", description: CONFIRM_CHECK_DESCRIPTION, parameters: ConfirmCheckSchema };
+const listChatsTool: Tool = { name: "list_chats", description: LIST_CHATS_DESCRIPTION, parameters: ListChatsSchema };
+const sendMessageTool: Tool = { name: "send_message", description: SEND_MESSAGE_DESCRIPTION, parameters: SendMessageSchema };
 
 // ═══════════════════════════════════════════════════════
 //  MODEL CATALOG
@@ -1908,7 +1982,8 @@ Available targets:
 - "app_preview" — App Preview page (optional url selects a running app/service)
 - "data" — Data sources and query explorer
 - "storage" — Storage buckets (S3/R2) and their mount status
-- "views" / "view" — Generated view registry or a specific view (id)
+- "artifacts" / "artifact" — Artifacts (documents, dashboards, designs, diagrams) or a specific one (id)
+- "views" / "view" — Former data views (deprecated: now artifacts of type view)
 
 Examples:
 - navigate_to({ target: "dashboard" })
@@ -1916,10 +1991,10 @@ Examples:
 - navigate_to({ target: "agent", name: "coder" })
 - navigate_to({ target: "files", path: "src/", highlight: "index.ts" })
 - navigate_to({ target: "app_preview", url: "https://machine.example.ts.net:3020/" })
-- navigate_to({ target: "view", id: "view-id" })
+- navigate_to({ target: "artifact", id: "art_xyz" })
 - navigate_to({ target: "task", id: "task-xyz" })`,
   parameters: Type.Object({
-    target: Type.String({ description: "Page target: dashboard, tasks, task, missions, mission, agents, agent, skills, skill, files, apps, app, app_preview, data, storage, views, view, brain, activity, chat, memory, notifications, approvals, playbooks, config" }),
+    target: Type.String({ description: "Page target: dashboard, tasks, task, missions, mission, agents, agent, skills, skill, files, apps, app, app_preview, data, storage, artifacts, artifact, views, view, brain, activity, chat, memory, notifications, approvals, playbooks, config" }),
     id: Type.Optional(Type.String({ description: "Entity ID for detail pages (task, mission)" })),
     name: Type.Optional(Type.String({ description: "Entity name for detail pages (agent, skill)" })),
     path: Type.Optional(Type.String({ description: "Directory path for files target" })),
@@ -2082,7 +2157,7 @@ export const READ_TOOLS = new Set([
   "list_agents", "get_team", "get_memory", "get_config",
   "list_approvals", "list_checkpoints", "list_delays", "get_logs",
   // Read-only listing tools
-  "list_schedules", "list_checks", "list_models", "get_agent_learning", "list_notification_rules", "list_watchers", "wait_for_task",
+  "list_schedules", "list_checks", "list_chats", "list_models", "get_agent_learning", "get_agent_drive", "list_notification_rules", "list_watchers", "wait_for_task",
   // Skills (read-only)
   "list_orchestrator_skills", "list_agent_skills", "search_skills", "get_skill",
   // Playbooks (read-only)
@@ -2097,6 +2172,8 @@ export const READ_TOOLS = new Set([
   "whatsapp_read",
   // Structured data
   "data_list_sources", "data_test_source", "data_describe", "data_query", "data_sql", "data_list_views", "data_get_view",
+  // Artifacts
+  "artifact_get", "artifact_list",
   // Company Brain
   "brain_stats", "brain_search", "brain_get_entity", "brain_get_context", "brain_list_runs",
   // Storage (buckets)
@@ -2120,9 +2197,11 @@ export const WRITE_TOOLS = new Set([
   // Voice replies
   "set_voice_replies",
   // Agent learning
-  "review_agent_learning", "revert_agent_learning",
+  "review_agent_learning", "revert_agent_learning", "reflect_agent", "confirm_check",
   // Conversation checks
-  "schedule_check", "cancel_check",
+  "schedule_check", "cancel_check", "send_message",
+  // Artifacts
+  "artifact_create", "artifact_update", "artifact_delete",
   // Notification rules
   "add_notification_rule", "remove_notification_rule", "send_notification",
   // Task watchers
@@ -2249,11 +2328,11 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
   // Voice replies
   setVoiceRepliesTool,
   // Conversation checks
-  scheduleCheckTool, listChecksTool, cancelCheckTool,
+  scheduleCheckTool, listChecksTool, cancelCheckTool, confirmCheckTool, listChatsTool, sendMessageTool,
   // Model catalog
   listModelsTool,
   // Agent learning
-  getAgentLearningTool, reviewAgentLearningTool, revertAgentLearningTool,
+  getAgentLearningTool, reviewAgentLearningTool, revertAgentLearningTool, getAgentDriveTool, reflectAgentTool,
   // Notification rules (2 write + 1 read above + 1 direct send)
   addNotificationRuleTool, removeNotificationRuleTool, sendNotificationTool,
   // Task watchers (2 write + 2 read above)
@@ -2284,6 +2363,7 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
   controlAppTool, controlAppServiceTool, runAppDeploymentTool, captureAppScreenshotTool,
   // Structured data + generated views
   ...DATA_ORCHESTRATOR_TOOLS,
+  ...ARTIFACT_TOOLS,
   // Evidence-grounded semantic company graph
   ...BRAIN_ORCHESTRATOR_TOOLS,
   // Storage: S3/R2 buckets (host-side; admin + object tools)
@@ -2303,6 +2383,11 @@ export const ALL_ORCHESTRATOR_TOOLS: Tool[] = [
 
 /** Tool action labels for the approval prompt title. */
 const TOOL_LABELS: Record<string, string> = {
+  artifact_create: "Create Artifact",
+  artifact_update: "Update Artifact",
+  artifact_get: "Read Artifact",
+  artifact_list: "List Artifacts",
+  artifact_delete: "Delete Artifact",
   create_task: "Create Task",
   update_task: "Update Task",
   delete_task: "Delete Task",
@@ -2400,10 +2485,15 @@ const TOOL_LABELS: Record<string, string> = {
   schedule_check: "Schedule Check",
   list_checks: "List Checks",
   cancel_check: "Cancel Check",
+  list_chats: "List Chats",
+  send_message: "Send Message",
   list_models: "List Models",
   get_agent_learning: "Agent Learning",
   review_agent_learning: "Review Agent Learning",
   revert_agent_learning: "Revert Agent Learning",
+  get_agent_drive: "Agent Drive",
+  reflect_agent: "Reflect Agent",
+  confirm_check: "Confirm Check",
   // Notification rules
   add_notification_rule: "Add Notification Rule",
   remove_notification_rule: "Remove Notification Rule",
@@ -2553,6 +2643,15 @@ export async function executeOrchestratorTool(
       case "control_app": return execControlApp(polpo, args);
       case "capture_app_screenshot": return execCaptureAppScreenshot(polpo, args);
 
+      // ── Artifacts ──
+      case "artifact_create": case "artifact_update": case "artifact_get": case "artifact_list": case "artifact_delete":
+        return executeArtifactTool(toolName, args, {
+          store: getArtifactStore(polpo.getPolpoDir()),
+          author: "polpo",
+          ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+          emit: (payload) => polpo.emit("artifact:changed", payload),
+        });
+
       // ── Structured data ──
       case "data_list_sources": case "data_register_source": case "data_update_source": case "data_delete_source":
       case "data_test_source": case "data_set_source_grant": case "data_describe": case "data_query": case "data_sql": case "data_mutate":
@@ -2660,11 +2759,16 @@ export async function executeOrchestratorTool(
       case "get_agent_learning":
       case "review_agent_learning":
       case "revert_agent_learning": return execAgentLearning(polpo, toolName, args);
+      case "get_agent_drive":
+      case "reflect_agent": return execAgentDrive(polpo, toolName, args);
+      case "confirm_check":  return execConfirmCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
 
       // ── Conversation checks (this chat) ──
-      case "schedule_check": return execScheduleCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId, origin: context.origin });
-      case "list_checks":    return execListChecks({ manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
+      case "schedule_check": return execScheduleCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId, origin: context.origin, chats: polpo });
+      case "list_checks":    return execListChecks({ manager: polpo.getConversationCheckManager(), sessionId: context.sessionId }, args);
       case "cancel_check":   return execCancelCheck(args, { manager: polpo.getConversationCheckManager(), sessionId: context.sessionId });
+      case "list_chats":     return execListChats({ chats: polpo });
+      case "send_message":   return execSendMessage(args, { chats: polpo });
 
       // ── Notification Rules ──
       case "add_notification_rule":    return execAddNotificationRule(polpo, args);
@@ -3931,6 +4035,7 @@ async function execAddAgent(polpo: Orchestrator, args: Record<string, unknown>):
     emailAllowedDomains: args.emailAllowedDomains as string[] | undefined,
     learning: args.learning as AgentConfig["learning"] | undefined,
     voiceReplies: args.voiceReplies as AgentConfig["voiceReplies"] | undefined,
+    drive: args.drive as AgentConfig["drive"] | undefined,
   };
   // Strip undefined values so addAgent only receives explicitly set fields
   const cleaned = Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined));
@@ -3978,6 +4083,7 @@ async function execUpdateAgent(polpo: Orchestrator, args: Record<string, unknown
   if (args.emailAllowedDomains !== undefined) updates.emailAllowedDomains = args.emailAllowedDomains as string[];
   if (args.team !== undefined) updates.team = args.team as string;
   if (args.learning !== undefined) updates.learning = args.learning as AgentConfig["learning"];
+  if (args.drive !== undefined) updates.drive = { ...(existing.drive ?? {}), ...(args.drive as AgentConfig["drive"]) };
   if (args.voiceReplies !== undefined) updates.voiceReplies = args.voiceReplies as AgentConfig["voiceReplies"];
   let sandboxNote = "";
   if (args.sandbox !== undefined) {

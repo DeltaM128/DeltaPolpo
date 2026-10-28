@@ -8,8 +8,8 @@ import {
 
 /**
  * A task blocked by a checkpoint, delay or quality gate must also depend on that gate's
- * afterTasks, or the mission is refused. Playbooks drawn in the graph editor before it
- * added them lack those dependencies: add them when the playbook runs.
+ * afterTasks, or the mission is refused. Playbooks written by hand or by an agent often
+ * lack those dependencies: add them when the playbook runs.
  */
 export function withFlowControlDependencies(data: string): string {
   let mission: { tasks?: Array<{ title?: string; dependsOn?: string[] }>; [k: string]: unknown };

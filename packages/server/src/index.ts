@@ -11,7 +11,7 @@
 // Route factories
 export { taskRoutes } from "./routes/tasks.js";
 export { missionRoutes } from "./routes/missions.js";
-export { playbookRoutes } from "./routes/playbooks.js";
+export { playbookRoutes, withFlowControlDependencies } from "./routes/playbooks.js";
 export { approvalRoutes } from "./routes/approvals.js";
 export { chatRoutes } from "./routes/chat.js";
 export { vaultRoutes } from "./routes/vault.js";
@@ -34,7 +34,7 @@ export { attachmentRoutes } from "./routes/attachments.js";
 export { countsRoutes } from "./routes/counts.js";
 export { streamRegistry, type PendingSteer, type SteerResult } from "./stream-registry.js";
 export { sessionLeases, MAX_LEASE_MS } from "./session-lease.js";
-export { internalCallHeaders, isInternalCall, INTERNAL_CALL_HEADER } from "./internal-call.js";
+export { internalCallHeaders, isInternalCall, INTERNAL_CALL_HEADER, trustedApiCallHeaders, isTrustedApiCall, TRUSTED_API_CALL_HEADER } from "./internal-call.js";
 export { TurnScheduler, SessionBusyError, createTurnScheduler, type TurnSchedulerDeps, type TurnOutcome, type TurnStartReason, type CarriedSteer, type SendNowResult } from "./turn-scheduler.js";
 
 // Dependency types

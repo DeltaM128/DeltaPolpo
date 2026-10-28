@@ -26,11 +26,11 @@ import {
 import { streamRegistry, type PendingSteer } from "../stream-registry.js";
 import type { TurnOutcome, TurnScheduler } from "../turn-scheduler.js";
 import { sessionLeases } from "../session-lease.js";
-import { INTERNAL_CALL_HEADER, isInternalCall } from "../internal-call.js";
+import { INTERNAL_CALL_HEADER, isInternalCall, isTrustedApiCall, TRUSTED_API_CALL_HEADER } from "../internal-call.js";
 import { type ContextCheckpointStore } from "../context-checkpoint.js";
 import { createSessionCompaction } from "../session-compactor.js";
 import type { TokenUsageRecord } from "@polpo-ai/core/token-usage";
-import type { ConversationCheckTarget } from "@polpo-ai/core/conversation-checks";
+import { todayLine, type ConversationCheckTarget } from "@polpo-ai/core/conversation-checks";
 import { checkToolCalls, type ToolArgumentsValidator } from "../tool-arguments.js";
 
 const DEFAULT_MAX_TURNS = 200;
@@ -469,6 +469,8 @@ export interface CompletionRouteDeps {
   resolveAgentModel: (agentConfig: any, settingsReasoning?: string) => Promise<{ model: any; streamOpts: any }>;
   /** Build agent system prompt for conversational mode. */
   buildAgentPrompt: (agentConfig: any) => string | Promise<string>;
+  /** What else an agent's chats know about it (its purpose and self-portrait, when it has a drive). */
+  agentChatContext?: (agentConfig: any) => Promise<string | undefined>;
   /** Create tools + executor for the agent. Return empty arrays for chat-only. */
   resolveAgentTools: (agentConfig: any, context?: { sessionId: () => string | undefined; origin?: ConversationCheckTarget }) => Promise<{
     tools: any[];
@@ -569,8 +571,8 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
   const handleCompletion = async (c: any, lease: TurnLease): Promise<any> => {
     const deps = getDeps();
 
-    // ── Auth ──
-    if (apiKeys && apiKeys.length > 0) {
+    // ── Auth ── (calls the server makes for an authenticated MCP client carry the trusted marker)
+    if (apiKeys && apiKeys.length > 0 && !isTrustedApiCall(c.req.header(TRUSTED_API_CALL_HEADER))) {
       const auth = c.req.header("Authorization");
       const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
       if (!token || !apiKeys.includes(token)) {
@@ -654,8 +656,11 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
         "the user asks to view a file, move to a Polpo page, or open an external URL.",
         "After one of those client-side tools completes, the UI sends a system acknowledgement;",
         "treat it as the tool result and do not repeat the same UI action for the same request.",
-        "To follow up later (\"check every 10 minutes\", \"tell us when it is done\"), use schedule_check when you have it;",
-        "never promise to notify later without it: nothing runs after this turn.",
+        "You can write to any chat, not only this one: send_message sends now to any Telegram group, topic or person",
+        "(list_chats lists them); schedule_check does it later, once (at, in_minutes) or on a schedule (every_minutes, cron),",
+        "to any of them (to), with a fixed message or instructions to run. Use them when asked to notify, remind or follow up;",
+        "never promise to notify later without schedule_check: nothing runs after this turn.",
+        todayLine(agentConfig.identity?.timezone),
         "When someone asks you to learn from your conversations (or to stop), or to answer with voice messages,",
         "change it yourself with set_learning or set_voice_replies.",
       ].join("\n");
@@ -663,7 +668,8 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
       // Keep the chat-mode rules last: buildAgentPrompt is shared with
       // autonomous task execution and intentionally tells runners not to ask
       // questions. In a direct chat, this later block overrides that rule.
-      const basePrompt = `${agentSystemPrompt}\n\n${conversationalPreamble}`;
+      const chatContext = await deps.agentChatContext?.(agentConfig).catch(() => undefined);
+      const basePrompt = `${agentSystemPrompt}\n\n${conversationalPreamble}${chatContext ? `\n\n${chatContext}` : ""}`;
       fullSystemPrompt = extraSystemParts.length > 0
         ? `${basePrompt}\n\n## Additional context from caller\n\n${extraSystemParts.join("\n\n")}`
         : basePrompt;
@@ -1551,7 +1557,8 @@ export function completionRoutes(getDeps: () => CompletionRouteDeps, apiKeys?: s
           const response = await piStream.result();
           await recordResponseUsage(response);
           messages.push(response);
-          finalText += turnText;
+          // the text of each step (between tool calls) is its own paragraph, not glued to the last one
+          finalText = finalText.trim() && turnText.trim() ? `${finalText.trimEnd()}\n\n${turnText.trimStart()}` : finalText + turnText;
 
           const toolCalls = response.content.filter(
             (cc: any): cc is { type: "toolCall"; id: string; name: string; arguments: Record<string, any> } =>

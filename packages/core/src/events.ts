@@ -46,6 +46,7 @@ export interface PolpoEventMap {
   "agent:updated": { agentName: string; agents: AgentConfig[]; teams: Team[]; timestamp: string };
   "agent:removed": { agentName: string; agents: AgentConfig[]; teams: Team[]; timestamp: string };
   /** An agent reviewed its conversations (learning): what it changed in its memory and own skills. */
+  "agent:reflected": { agentName: string; trigger: "first" | "activity" | "daily" | "manual"; messages: number; summary: string; actions: string[]; timestamp: string };
   "agent:learned": { agentName: string; messages: number; changes: { id: string; kind: "memory" | "skill-created" | "skill-updated"; target: string }[]; summary: string; timestamp: string };
   "team:created": { teamName: string; agents: AgentConfig[]; teams: Team[]; timestamp: string };
   "team:updated": { oldName?: string; teamName: string; agents: AgentConfig[]; teams: Team[]; timestamp: string };
@@ -187,6 +188,7 @@ export interface PolpoEventMap {
   // Registries and operational surfaces
   "app:changed": { appId: string; action: "created" | "updated" | "deleted" | "runtime" | "log"; resourceId?: string; timestamp: string };
   "data-source:changed": { sourceId: string; action: "created" | "updated" | "deleted" | "activity" | "data"; timestamp: string };
+  "artifact:changed": { artifactId: string; action: "created" | "updated" | "deleted"; type: string; title: string; timestamp: string };
   "data-view:changed": { viewId: string; action: "created" | "updated" | "deleted"; timestamp: string };
   "skill:changed": { scope: "agent" | "orchestrator"; action: "created" | "updated" | "deleted" | "installed" | "assigned" | "unassigned" | "indexed"; skillName?: string; agentName?: string; timestamp: string };
   "token-usage:recorded": { timestamp: string };
