@@ -82,6 +82,7 @@ import { useAsyncAction, useConfig } from "@/hooks/use-polpo";
 import { AppliedRulesPanel } from "@/components/shared/applied-rules-panel";
 import type { AnyRule, ScopedRules } from "@/lib/applied-rules";
 import { AgentAvatar } from "@/components/shared/agent-avatar";
+import { outputFolderLink, taskOutputFolder } from "@/lib/output-folders";
 import { toast } from "sonner";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -863,6 +864,7 @@ export function TaskDetailPage() {
   const { tasks: allTasks } = useTasks();
   const { processes } = useProcesses();
   const { agents } = useAgents();
+  const { missions } = useMissions();
   const { progress: assessmentProgress, isAssessing, checks: assessmentChecks } = useAssessmentProgress(taskId ?? "");
 
   // Resolve dependsOn IDs to task titles
@@ -875,6 +877,10 @@ export function TaskDetailPage() {
   }
   const process = task ? processes.find(p => p.taskId === task.id) : undefined;
   const agentConfig = task ? agents.find(a => a.name === task.assignTo) : undefined;
+  // Where the task saves its files: output/<mission run>/<NN> - <title>/
+  const outputFolder = task
+    ? taskOutputFolder(task, missions.find(m => m.id === task.missionId || m.name === task.group)?.data)
+    : undefined;
   // Tasks of agents with a pipeline run it step by step: show the run.
   const showPipelineTab = !!agentConfig?.pipeline
     || !!process?.activity.pipeline
@@ -1642,6 +1648,23 @@ export function TaskDetailPage() {
 
               {/* ── Right column (2/5): details, expectations, outcomes ── */}
               <div className="lg:col-span-2 space-y-4">
+
+              {/* ── Output folder (the files this task saved) ── */}
+              {outputFolder && (
+                <Card className="bg-card/80 backdrop-blur-sm border-border/40 py-0 gap-0">
+                  <CardContent className="pt-4 pb-4">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-1">
+                      <FolderOpen className="h-3 w-3" /> Output folder
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="min-w-0 flex-1 truncate font-mono text-xs" title={outputFolder}>{outputFolder}</code>
+                      <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={() => navigate(outputFolderLink(outputFolder))}>
+                        Open
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* ── Expectations ── */}
               {task.expectations.length > 0 && (

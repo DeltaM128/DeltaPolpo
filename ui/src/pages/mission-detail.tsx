@@ -41,6 +41,7 @@ import {
   PauseCircle,
   PlayCircle,
   ShieldCheck,
+  FolderOpen,
 } from "lucide-react";
 import {
   ReactFlow,
@@ -71,6 +72,8 @@ import { AppliedRulesPanel } from "@/components/shared/applied-rules-panel";
 import type { AnyRule, ScopedRules } from "@/lib/applied-rules";
 import { useLocalState } from "./coding/use-local-state";
 import { PausedCheckpoints } from "@/components/paused-checkpoints";
+import { missionOutputPath } from "@polpo-ai/core/output-paths";
+import { outputFolderLink } from "@/lib/output-folders";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   parseMissionData,
@@ -1388,6 +1391,16 @@ export function MissionDetailView({
           {(mission.status === "active" || mission.status === "paused") && onAbort && (
             <Button variant="outline" size="sm" className="text-red-400 hover:text-red-500" disabled={!!actionPending} onClick={() => handleAction(onAbort, "Mission aborted")}>
               {actionPending === "Mission aborted" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5 mr-1.5" />} Abort
+            </Button>
+          )}
+          {mission.status !== "draft" && (
+            <Button
+              variant="outline"
+              size="sm"
+              title="The files this run's tasks saved, one folder per task"
+              onClick={() => navigate(outputFolderLink(missionOutputPath(mission.name)))}
+            >
+              <FolderOpen className="h-3.5 w-3.5 mr-1.5" /> Output
             </Button>
           )}
           {onDelete && (
