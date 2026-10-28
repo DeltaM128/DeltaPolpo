@@ -248,11 +248,13 @@ describe("an agent does not overwrite the other tasks' output folders", () => {
       const tools = createSystemTools(project, undefined, undefined, own);
       const tool = (name: string) => tools.find((t) => t.name === name)!;
       await expect(tool("write").execute("id", { path: join(drafts, "risposte", "T-107.md"), content: "corretta" }))
-        .rejects.toThrow(/another task's output folder.*06 - correggi le bozze/s);
+        .rejects.toThrow(/outside your own output folder.*06 - correggi le bozze/s);
       await expect(tool("edit").execute("id", { path: join(drafts, "risposte", "T-107.md"), old_string: "originale", new_string: "corretta" }))
-        .rejects.toThrow(/another task's output folder/);
+        .rejects.toThrow(/outside your own output folder/);
       // the mission folder itself belongs to no task
-      await expect(tool("write").execute("id", { path: join(project, "output", "supporto (2)", "x.md"), content: "x" })).rejects.toThrow(/another task's output folder/);
+      await expect(tool("write").execute("id", { path: join(project, "output", "supporto (2)", "x.md"), content: "x" })).rejects.toThrow(/outside your own output folder/);
+      // a mistyped folder name (seen in a run: "supporto- clienti (3)") is refused too, so no stray folder appears
+      await expect(tool("write").execute("id", { path: join(project, "output", "supporto- (2)", "06 - correggi le bozze", "x.md"), content: "x" })).rejects.toThrow(/outside your own output folder/);
       expect(readFileSync(join(drafts, "risposte", "T-107.md"), "utf-8")).toBe("originale");
 
       await tool("write").execute("id", { path: join(own, "risposte", "T-107.md"), content: "corretta" });

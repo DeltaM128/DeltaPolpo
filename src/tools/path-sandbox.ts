@@ -142,8 +142,8 @@ export function assertWriteAllowed(filePath: string, allowedPaths: string[], too
   const resolved = canonicalPath(filePath);
   if (within(resolved, readOnlyOutputRoot) && !within(resolved, ownOutputDir)) {
     throw new Error(
-      `[sandbox] ${toolName}: "${filePath}" belongs to another task's output folder, which you can read but not change. ` +
-      `Write your files in your own output folder: ${ownOutputDir}`,
+      `[sandbox] ${toolName}: "${filePath}" is outside your own output folder. The rest of the output folder holds the other tasks' folders, ` +
+      `which you can read but not change. Write your files in your own output folder: ${ownOutputDir}`,
     );
   }
 }
