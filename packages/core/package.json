@@ -162,6 +162,10 @@
       "types": "./dist/approval-manager.d.ts",
       "import": "./dist/approval-manager.js"
     },
+    "./iso-duration": {
+      "types": "./dist/iso-duration.d.ts",
+      "import": "./dist/iso-duration.js"
+    },
     "./escalation-manager": {
       "types": "./dist/escalation-manager.d.ts",
       "import": "./dist/escalation-manager.js"
@@ -265,6 +269,10 @@
     "./conversation-checks": {
       "types": "./dist/conversation-checks.d.ts",
       "import": "./dist/conversation-checks.js"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts.d.ts",
+      "import": "./dist/artifacts.js"
     }
   },
   "sideEffects": false,
