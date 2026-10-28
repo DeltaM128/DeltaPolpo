@@ -349,6 +349,7 @@ export function buildSystemPrompt(agent: AgentConfig, cwd: string, polpoDir?: st
       "Create or edit files elsewhere only when the task is about those files (e.g. a source file of the project).",
       "When you register an outcome with register_outcome, use paths inside this directory.",
       "This directory is pre-created and writable. Every task has its own output directory.",
+      "The output directories of the other tasks (for example the tasks this one depends on) are read-only: read their files, and write what you change or correct in your own output directory.",
     );
   }
 
